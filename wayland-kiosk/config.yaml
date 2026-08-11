@@ -50,8 +50,6 @@ ulimits:
 
 # Default User Configuration
 options:
-#  ha_username: ""
-#  ha_password: ""
   ha_url: "http://127.0.0.1:8123"
   ha_dashboard: "lovelace"
   browser_refresh: 12000
@@ -62,12 +60,12 @@ options:
   rotate_display: "right"
   login_delay: 10
   ignore_certificate_errors: true
+  auth_method: "trusted_networks"
+  ha_username: ""
+  ha_password: ""
 
-# Enforced UI Schema
 schema:
   ha_url: url
-#  ha_username: str
-#  ha_password: password
   ha_dashboard: str?
   browser_refresh: int(0,)
   ha_sidebar: list(full|narrow|none)
@@ -77,3 +75,6 @@ schema:
   rotate_display: list(normal|left|right|inverted)
   ignore_certificate_errors: bool
   login_delay: float(0,)
+  auth_method: list(trusted_networks|credentials|none)
+  ha_username: str?
+  ha_password: password?
