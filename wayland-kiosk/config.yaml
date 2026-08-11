@@ -1,54 +1,46 @@
 name: "HAOS Wayland Kiosk"
 description: "Wayland-native kiosk dashboard using Cage and Chromium"
-version: "1.1"
+version: "1.2"
 slug: "haos_wayland_kiosk"
 init: false
 startup: application
-
 url: "https://github.com/trooperthorn/HA-Kiosk"
-host_dbus: true
 
-# Network and API Access
+# --- Network and API Access ---
+# host_network is required so that ha_url: http://127.0.0.1:8123 reaches the
+# real Home Assistant Core instance (with host_network off, 127.0.0.1 would
+# just be the container's own loopback). It's also what makes the
+# trusted_networks auth provider trivially trust this add-on's requests.
 host_network: true
-ingress: true
-hassio_api: true
-homeassistant_api: true
-auth_api: true
 
 arch:
   - aarch64
   - amd64
   - armv7
 
-# Hardware and System Access
-video: true
+# --- Hardware and System Access ---
+# Minimum permissions: explicit device passthrough instead of full_access.
+# full_access: true (previous config) disabled AppArmor confinement and
+# granted access to every device on the host, which is far more than this
+# add-on needs. Only /dev/dri (GPU/DRM) and /dev/input (touch/keyboard) are
+# actually required.
 udev: true
 audio: true
-usb: true
-full_access: true
+devices:
+  - /dev/dri:/dev/dri:rwm
+  - /dev/input:/dev/input:rwm
 
-# Storage and Limits
+# --- Storage and Limits ---
 map:
   - addon_config:rw
   - media:rw
-  
-#privileged:
-#  - SYS_ADMIN
-#devices:
-#  - /dev/input:/dev/input
-#  - /dev/dri:/dev/dri
 
-# Storage and Limits
-map:
-  - addon_config:rw
-  - media:rw
 ulimits:
   nofile:
     soft: 65536
     hard: 65536
 
-
-# Default User Configuration
+# --- Default User Configuration ---
 options:
   ha_url: "http://127.0.0.1:8123"
   ha_dashboard: "lovelace"
@@ -60,10 +52,15 @@ options:
   rotate_display: "right"
   login_delay: 10
   ignore_certificate_errors: true
+  # Auth options (new)
   auth_method: "trusted_networks"
   ha_username: ""
   ha_password: ""
+  # Shared secret required by rest_server.py's control API. Leave blank to
+  # disable the check (not recommended) -- see rest_server.py comments.
+  api_token: ""
 
+# --- Enforced UI Schema ---
 schema:
   ha_url: url
   ha_dashboard: str?
@@ -78,3 +75,4 @@ schema:
   auth_method: list(trusted_networks|credentials|none)
   ha_username: str?
   ha_password: password?
+  api_token: str?
