@@ -1,52 +1,81 @@
-import os
-import requests
 import shlex
 import logging
 import asyncio
 import urllib.request
 import urllib.error
 import json
-import subprocess
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from aiohttp import web
 
 # Type alias for your payload
 Payload = Dict[str, Any]
 SHORT_TIMEOUT = 5
 
-# Security Whitelist for execution command wrapper
+# Commands the wlr_randr / refresh / display endpoints are allowed to
+# execute. execute_command() runs via asyncio.create_subprocess_exec, which
+# never invokes a shell -- so there is no shell-metacharacter injection risk
+# regardless of what's in `args`. The whitelist below is the actual
+# protection: even a caller who can hit this API (see auth check in
+# api_handler) can only ever run one of these binaries, with argv passed
+# through untouched.
 ALLOWED_COMMANDS = {"wlr-randr", "wtype", "killall", "swayidle"}
-DANGEROUS_SHELL_TOKENS = [";", "|", "&", ">", "<", "$", "`"]
+
+# --------------------------------------------------------------------------- #
+# OPTIONS / SHARED-SECRET AUTH
+# --------------------------------------------------------------------------- #
+
+def load_options() -> Dict[str, Any]:
+    try:
+        with open("/data/options.json") as f:
+            return json.load(f)
+    except Exception:
+        logging.exception("Failed to read /data/options.json")
+        return {}
+
+OPTIONS = load_options()
+API_TOKEN: Optional[str] = OPTIONS.get("api_token") or None
+
+if not API_TOKEN:
+    logging.warning(
+        "api_token is not set -- the control API is unauthenticated on "
+        "whatever interface it's bound to. Set api_token in the add-on "
+        "configuration to require callers to send it as a Bearer token."
+    )
 
 # --------------------------------------------------------------------------- #
 # SERVER ROUTING
 # --------------------------------------------------------------------------- #
 ROUTES = {}
 
-# Grab the internal token automatically injected by HA
-SUPERVISOR_TOKEN = os.environ.get('SUPERVISOR_TOKEN')
-
-# Use the internal API URL, not the frontend UI URL
-API_URL = "http://supervisor/core/api/services/light/turn_on"
-
-headers = {
-    "Authorization": f"Bearer {SUPERVISOR_TOKEN}",
-    "Content-Type": "application/json",
-}
-
-# The Python script sends the Bearer token, so it will NOT get a 401 error!
-response = requests.post(API_URL, headers=headers, json={"entity_id": "sun.sun"})
-
 
 def register_function(name, optional=None, required=None, validators=None):
-    """Stores the registered functions into the ROUTES dictionary."""
+    """Registers a function into ROUTES, enforcing required fields and
+    per-field validators before the handler ever runs. Previously this
+    decorator accepted required/validators but did nothing with them, so a
+    request missing a required field raised a raw KeyError inside the
+    handler that leaked as an opaque 500 -- this wires that enforcement up
+    for real."""
+    required = required or []
+    validators = validators or {}
+
     def decorator(func):
-        ROUTES[name] = func
+        async def wrapper(data: Payload) -> Dict[str, Any]:
+            missing = [key for key in required if key not in data]
+            if missing:
+                return {"success": False, "error": f"Missing required field(s): {missing}"}
+            for key, validator in validators.items():
+                if key in data and not validator(data[key]):
+                    return {"success": False, "error": f"Invalid value for field: {key}"}
+            return await func(data)
+
+        ROUTES[name] = wrapper
         return func
+
     return decorator
 
+
 async def execute_command(cmd_list, timeout=SHORT_TIMEOUT, log_prefix="", allow_command=False, print_stdout=True):
-    """Your updated safe execution wrapper enforcing the Wayland whitelist"""
+    """Safe execution wrapper enforcing the command whitelist."""
     if not allow_command or cmd_list[0] not in ALLOWED_COMMANDS:
         return {"success": False, "error": f"Command {cmd_list[0]} not whitelisted."}
     try:
@@ -54,37 +83,40 @@ async def execute_command(cmd_list, timeout=SHORT_TIMEOUT, log_prefix="", allow_
             *cmd_list, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if print_stdout and stdout:
+            logging.info("[%s] stdout: %s", log_prefix, stdout.decode().strip())
+        if stderr:
+            logging.warning("[%s] stderr: %s", log_prefix, stderr.decode().strip())
         return {"success": proc.returncode == 0, "stdout": stdout.decode(), "stderr": stderr.decode()}
     except Exception as e:
+        logging.exception("[%s] execution failed", log_prefix)
         return {"success": False, "error": str(e)}
 
-#CHROME WATCH
+
+# CHROME WATCHDOG
 async def chromium_watchdog():
     """Polls the CDP endpoint to verify Chromium is not frozen."""
     failures = 0
-    # Give Chromium 20 seconds to finish its initial boot sequence
-    await asyncio.sleep(20) 
-    
+    await asyncio.sleep(20)  # give Chromium time to finish its initial boot
+
     while True:
         try:
-            # Ping the CDP endpoint with a strict 5-second timeout
             def _ping():
                 req = urllib.request.Request("http://localhost:9222/json")
                 urllib.request.urlopen(req, timeout=5)
-            
+
             await asyncio.to_thread(_ping)
-            failures = 0 # Reset counter on success
-            
-        except Exception as e:
+            failures = 0
+
+        except Exception:
             failures += 1
-            logging.warning(f"Watchdog: Chromium unresponsive ({failures}/3).")
-            
+            logging.warning("Watchdog: Chromium unresponsive (%d/3).", failures)
+
             if failures >= 3:
                 logging.error("Watchdog: Chromium is frozen! Forcing container restart.")
-                # Killing Cage drops PID 1, stopping the container and triggering the HA Watchdog
-                subprocess.run(["killall", "cage"])
+                await execute_command(["killall", "cage"], log_prefix="watchdog", allow_command=True)
                 break
-                
+
         await asyncio.sleep(30)
 
 # --------------------------------------------------------------------------- #
@@ -92,18 +124,18 @@ async def chromium_watchdog():
 # --------------------------------------------------------------------------- #
 
 @register_function("refresh_browser")
-async def handle_refresh_browser(data: Payload) -> dict[str, Any]:
+async def handle_refresh_browser(data: Payload) -> Dict[str, Any]:
     """Send F5 to refresh browser via wtype."""
-    result = await execute_command(["wtype", "-k", "F5"], 
-                                   timeout=SHORT_TIMEOUT, log_prefix="refresh_browser", allow_command=True)
+    result = await execute_command(["wtype", "-k", "F5"],
+                                    timeout=SHORT_TIMEOUT, log_prefix="refresh_browser", allow_command=True)
     return {"success": result["success"]}
 
 
 @register_function("is_display_on")
-async def handle_is_display_on(data: Payload) -> dict[str, Any]:
+async def handle_is_display_on(data: Payload) -> Dict[str, Any]:
     """Return boolean whether monitor is currently on."""
-    result = await execute_command(["wlr-randr"], print_stdout=False, 
-                                   timeout=SHORT_TIMEOUT, log_prefix="is_display_on", allow_command=True)
+    result = await execute_command(["wlr-randr"], print_stdout=False,
+                                    timeout=SHORT_TIMEOUT, log_prefix="is_display_on", allow_command=True)
     if not result["success"]:
         return {"success": False, "error": "Failed to query display state"}
 
@@ -113,12 +145,12 @@ async def handle_is_display_on(data: Payload) -> dict[str, Any]:
 
 
 @register_function("display_on", optional=["timeout"])
-async def handle_display_on(data: Payload) -> dict[str, Any]:
+async def handle_display_on(data: Payload) -> Dict[str, Any]:
     """Turn display on, optionally set swayidle blanking timeout."""
     blank_timeout = data.get("timeout")
     cmds = [["wlr-randr", "--output", "*", "--on"]]
     log_msg = ""
-    
+
     if blank_timeout is None:
         pass
     elif blank_timeout == 0:
@@ -138,33 +170,35 @@ async def handle_display_on(data: Payload) -> dict[str, Any]:
 
 
 @register_function("display_off")
-async def handle_display_off(data: Payload) -> dict[str, Any]:
+async def handle_display_off(data: Payload) -> Dict[str, Any]:
     """Force display off immediately using Wayland."""
-    result = await execute_command(["wlr-randr", "--output", "*", "--off"], 
-                                   timeout=SHORT_TIMEOUT, log_prefix="display_off", allow_command=True)
+    result = await execute_command(["wlr-randr", "--output", "*", "--off"],
+                                    timeout=SHORT_TIMEOUT, log_prefix="display_off", allow_command=True)
     return {"success": result["success"]}
 
 
 @register_function("wlr_randr", required=["args"])
-async def handle_wlr_randr(data: Payload) -> dict[str, Any]:
-    """Run arbitrary wlr-randr command (sanitized). Replaces handle_xset."""
+async def handle_wlr_randr(data: Payload) -> Dict[str, Any]:
+    """Run a whitelisted wlr-randr command. `args` is split with shlex and
+    passed straight to execve() via create_subprocess_exec -- there is no
+    shell involved, so there's nothing for shell metacharacters to do."""
     args = data["args"]
-    dangerous_tokens = [tok for tok in DANGEROUS_SHELL_TOKENS if tok in args]
-    if dangerous_tokens:
-        return {"success": False, "error": f"Forbidden shell metacharacters: {dangerous_tokens}"}
-    
-    args_list = shlex.split(args)  
+    try:
+        args_list = shlex.split(args)
+    except ValueError as e:
+        return {"success": False, "error": f"Could not parse args: {e}"}
+
     result = await execute_command(["wlr-randr"] + args_list, timeout=SHORT_TIMEOUT, log_prefix="wlr_randr", allow_command=True)
     return {"success": result["success"], "result": result}
 
 
 @register_function("launch_url", optional=["url"])
-async def handle_launch_url(data: Payload) -> dict[str, Any]:
-    """Redirect browser with given URL via Chrome DevTools Protocol."""
+async def handle_launch_url(data: Payload) -> Dict[str, Any]:
+    """Redirect browser to given URL via Chrome DevTools Protocol."""
     url = str(data["url"]) if data.get("url") else "http://supervisor/core"
     if url != "about:blank" and not url.startswith(("http://", "https://")):
         url = "http://" + url
-        
+
     def _send_cdp_request():
         try:
             req = urllib.request.Request("http://localhost:9222/json")
@@ -172,13 +206,13 @@ async def handle_launch_url(data: Payload) -> dict[str, Any]:
                 pages = json.loads(response.read())
             if not pages:
                 return False
-                
+
             target_id = pages[0]['id']
             activate_req = urllib.request.Request(f"http://localhost:9222/json/activate/{target_id}", method='PUT')
             urllib.request.urlopen(activate_req)
             return True
         except urllib.error.URLError as e:
-            logging.error(f"CDP Request failed: {e}")
+            logging.error("CDP Request failed: %s", e)
             return False
 
     success = await asyncio.to_thread(_send_cdp_request)
@@ -191,41 +225,54 @@ async def handle_launch_url(data: Payload) -> dict[str, Any]:
 
 async def api_handler(request):
     """Handles incoming POST requests and routes them to the correct function."""
+    if API_TOKEN:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header != f"Bearer {API_TOKEN}":
+            return web.json_response({"success": False, "error": "Unauthorized"}, status=401)
+
     try:
         data = await request.json()
-        command = data.get("command")
-        
-        if command in ROUTES:
-            # Execute the matched async function
-            result = await ROUTES[command](data)
-            return web.json_response(result)
-        else:
-            return web.json_response({"success": False, "error": f"Unknown command: {command}"}, status=400)
-    except Exception as e:
-        return web.json_response({"success": False, "error": str(e)}, status=500)
+    except Exception:
+        return web.json_response({"success": False, "error": "Invalid JSON body"}, status=400)
+
+    command = data.get("command")
+    if command not in ROUTES:
+        return web.json_response({"success": False, "error": f"Unknown command: {command}"}, status=400)
+
+    try:
+        result = await ROUTES[command](data)
+        return web.json_response(result)
+    except Exception:
+        # Log the real exception server-side, but don't leak internals to
+        # the caller.
+        logging.exception("Unhandled error handling command: %s", command)
+        return web.json_response({"success": False, "error": "Internal server error"}, status=500)
+
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logging.info("Starting HAOS-Wayland-Kiosk REST API...")
-    
-    # 1. Start the Chrome Watchdog in the background
+
     asyncio.create_task(chromium_watchdog())
     logging.info("Chromium Watchdog initialized.")
-    
-    # 2. Initialize the Web Server
+
     app = web.Application()
     app.router.add_post('/api', api_handler)
-    
+
     runner = web.AppRunner(app)
     await runner.setup()
-    
-    # Bind to port 8080 with socket reuse enabled to prevent port-lock crashes on restart
-    site = web.TCPSite(runner, '0.0.0.0', 8034, reuse_address=True)
+
+    # Bind to loopback only. This API can redirect the kiosk browser and
+    # power the physical display off/on -- with host_network: true in
+    # config.yaml, binding to 0.0.0.0 would expose it to the entire local
+    # network, not just this container/host. If you need to call this from
+    # another host, use HA automations via Supervisor/Core rather than
+    # widening this bind address.
+    site = web.TCPSite(runner, '127.0.0.1', 8034, reuse_address=True)
     await site.start()
-    
-    logging.info("API listening on port 8034. Ready for Home Assistant commands.")
-    
-    # Run forever
+
+    logging.info("API listening on 127.0.0.1:8034. Ready for Home Assistant commands.")
+
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
