@@ -2,6 +2,8 @@ ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
 # Install Cage, Chromium, Wayland tools, and Python environment
+# curl added: run.sh polls Chromium's CDP endpoint (http://localhost:9222/json)
+# to detect the HA login page before typing credentials.
 RUN apk add --no-cache \
     cage \
     chromium \
@@ -18,6 +20,7 @@ RUN apk add --no-cache \
     wtype \
     wlopm \
     swayidle \
+    curl \
     python3 \
     py3-pip \
     py3-requests \
