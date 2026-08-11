@@ -67,9 +67,38 @@ export WLR_BACKEND=drm
 # bug in this add-on.
 
 # ---------------------------------------------------------
+# WAIT FOR SUPERVISOR API TO BE READY
+# ---------------------------------------------------------
+# bashio::config talks to the Supervisor API (/addons/self/options/config).
+# Right after an add-on rebuild/restart, this call can transiently return
+# 403 Forbidden while Supervisor finishes registering the new container
+# instance -- a known, previously-reported Supervisor-side issue (see
+# home-assistant/supervisor#1930 and #4111), not something this add-on can
+# fully prevent. When it happens, EVERY bashio::config call fails at once,
+# so every option below falls back to its script-level default -- including
+# rotate_display -- which can look like a rotation bug but isn't. Retry a
+# canary read a few times with backoff before accepting the fallback path;
+# this resolves the common transient case automatically.
+SUPERVISOR_READY=0
+for attempt in $(seq 1 5); do
+    canary=$(bashio::config 'ha_url' 2>/dev/null || true)
+    if [ -n "$canary" ] && [ "$canary" != "null" ]; then
+        SUPERVISOR_READY=1
+        break
+    fi
+    bashio::log.warning "Supervisor API not ready yet (attempt ${attempt}/5), retrying in 2s..."
+    sleep 2
+done
+
+if [ "$SUPERVISOR_READY" -eq 0 ]; then
+    bashio::log.error "Supervisor API did not respond after 5 attempts. ALL options will fall back to script defaults for this run -- rotation, login, dashboard, and every other setting will NOT reflect the add-on configuration screen. This is a known Supervisor-side issue (see home-assistant/supervisor#1930); try 'ha supervisor restart', then restart this add-on."
+fi
+
+# ---------------------------------------------------------
 # READ UI OPTIONS (WITH FALLBACKS)
 # ---------------------------------------------------------
-URL=$(bashio::config 'ha_url')
+# Reuse the canary read above instead of fetching ha_url a second time.
+URL="$canary"
 ROTATION_CONFIG=$(bashio::config 'rotate_display')
 SCREEN_TIMEOUT=$(bashio::config 'screen_timeout')
 AUTH_METHOD=$(bashio::config 'auth_method')
@@ -126,8 +155,20 @@ else
 fi
 
 # 2. Find the touchscreen device name
+#
+# NOTE ON `|| true`: bashio runs every script with `set -o errexit -o
+# pipefail` plus `shopt -s inherit_errexit`. Under that combination, a
+# pipeline like `... | head -n 1` is a landmine: head reads its one line
+# and exits, and if the upstream grep is still writing when that happens,
+# grep gets SIGPIPE -- which pipefail treats as the pipeline's exit status,
+# which errexit then treats as a fatal script error (this is exactly what
+# produces a container exit code of 141 = 128+SIGPIPE). Whether it triggers
+# depends on output size vs. the pipe buffer, which is why it can pass
+# testing and then fail intermittently in the field. `|| true` doesn't
+# change what gets captured -- the text is already on stdout regardless --
+# it just stops the harmless early-close from being treated as fatal.
 if [ -f "/proc/bus/input/devices" ]; then
-    TOUCH_DEVICE=$(grep -i "Name=" /proc/bus/input/devices | grep -i -E "touch|ilitek" | head -n 1 | cut -d'"' -f2)
+    TOUCH_DEVICE=$(grep -i "Name=" /proc/bus/input/devices | grep -i -E "touch|ilitek" | head -n 1 | cut -d'"' -f2 || true)
 fi
 
 if [ -n "$TOUCH_DEVICE" ]; then
@@ -214,7 +255,7 @@ if [ "$ROTATION_DEGREES" != "normal" ]; then
         max_wait=15
         wl_display=""
         while [ "$elapsed" -lt "$max_wait" ]; do
-            wl_display=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -m 1 "wayland-[0-9]*$")
+            wl_display=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -m 1 "wayland-[0-9]*$" || true)
             if [ -n "$wl_display" ]; then
                 break
             fi
@@ -253,10 +294,16 @@ case "$AUTH_METHOD" in
             bashio::log.warning "auth_method is 'credentials' but ha_username/ha_password are not both set -- skipping auto-login."
         else
             (
+                # login_delay is schema'd as float(0,), so it may arrive as
+                # e.g. "10.5" -- bash's [ -lt ] only does integers, so this
+                # truncates to whole seconds for the loop bound.
+                login_delay_int="${LOGIN_DELAY%.*}"
+                [ -z "$login_delay_int" ] && login_delay_int=10
+
                 elapsed=0
                 found=0
-                while [ "$elapsed" -lt "$LOGIN_DELAY" ]; do
-                    page_url=$(curl -s --max-time 2 http://localhost:9222/json 2>/dev/null | grep -o '"url":"[^"]*"' | head -n 1)
+                while [ "$elapsed" -lt "$login_delay_int" ]; do
+                    page_url=$(curl -s --max-time 2 http://localhost:9222/json 2>/dev/null | grep -o '"url":"[^"]*"' | head -n 1 || true)
                     if echo "$page_url" | grep -q "auth/authorize"; then
                         found=1
                         break
@@ -273,7 +320,7 @@ case "$AUTH_METHOD" in
                     wtype "$HA_PASSWORD"
                     wtype -k Return
                 else
-                    bashio::log.warning "Login page not detected within ${LOGIN_DELAY}s -- skipping auto-login. Consider raising login_delay."
+                    bashio::log.warning "Login page not detected within ${login_delay_int}s -- skipping auto-login. Consider raising login_delay."
                 fi
             ) &
         fi
