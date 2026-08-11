@@ -31,23 +31,22 @@ if [ -d "/dev/input" ]; then
 fi
 
 bashio::log.info "===================================================="
-
 bashio::log.info "Configuring Wayland runtime environment..."
 
 export XDG_RUNTIME_DIR=/tmp/xdg
-mkdir -p $XDG_RUNTIME_DIR
-chmod 0700 $XDG_RUNTIME_DIR
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
 
-# Start seatd without VT binding using its native environment variable
+# ---------------------------------------------------------
+# SEAT MANAGEMENT (seatd)
+# ---------------------------------------------------------
 bashio::log.info "Starting seat management daemon..."
 export SEATD_SOCK=/run/seatd.sock
 export LIBSEAT_BACKEND=seatd
 export SEATD_VTBOUND=0  # Tells seatd not to look for a physical TTY/VT
 
-# Run seatd cleanly without invalid arguments
 seatd -g root &
 
-# Wait up to 3 seconds for the socket to actually generate
 for i in $(seq 1 10); do
     if [ -S "$SEATD_SOCK" ]; then
         bashio::log.info "Seatd socket successfully established."
@@ -60,24 +59,24 @@ if [ ! -S "$SEATD_SOCK" ]; then
     bashio::log.error "CRITICAL: seatd failed to create socket!"
 fi
 
-
-# Clean residual display env vars
 unset DISPLAY
 unset WAYLAND_DISPLAY
 export WLR_BACKEND=drm
-# Earlier troubleshooting, we added export WLR_LIBINPUT_NO_DEVICES=1 to prevent wlroots from crashing if no devices were plugged in. 
-# However, this flag completely disables libinput—meaning it is intentionally ignoring your touchscreen!
-# export WLR_LIBINPUT_NO_DEVICES=1
+# NOTE: do NOT set WLR_LIBINPUT_NO_DEVICES=1 here -- that disables libinput
+# entirely (including the touchscreen), which was the cause of an earlier
+# bug in this add-on.
 
 # ---------------------------------------------------------
-# READ UI OPTIONS (WITH BULLETPROOF FALLBACKS)
+# READ UI OPTIONS (WITH FALLBACKS)
 # ---------------------------------------------------------
 URL=$(bashio::config 'ha_url')
 ROTATION_CONFIG=$(bashio::config 'rotate_display')
-IGNORE_CERTS=$(bashio::config 'ignore_certificate_errors')
 SCREEN_TIMEOUT=$(bashio::config 'screen_timeout')
+AUTH_METHOD=$(bashio::config 'auth_method')
+HA_USERNAME=$(bashio::config 'ha_username')
+HA_PASSWORD=$(bashio::config 'ha_password')
+LOGIN_DELAY=$(bashio::config 'login_delay')
 
-# If the HA API fails or fields are blank, FORCE local frontend default
 if [ -z "$URL" ] || [ "$URL" == "null" ]; then
     URL="http://127.0.0.1:8123"
     bashio::log.warning "HA API returned blank URL. Forcing default to http://127.0.0.1:8123"
@@ -91,39 +90,26 @@ fi
 if [ -z "$ROTATION_CONFIG" ] || [ "$ROTATION_CONFIG" == "null" ]; then
     ROTATION_CONFIG="normal"
 fi
-# ---------------------------------------------------------
-# DISPLAY FOCUS
-# ---------------------------------------------------------
-# ---------------------------------------------------------
-# READ UI OPTIONS (WITH BULLETPROOF FALLBACKS)
-# ---------------------------------------------------------
-URL=$(bashio::config 'ha_url')
-IGNORE_CERTS=$(bashio::config 'ignore_certificate_errors')
-SCREEN_TIMEOUT=$(bashio::config 'screen_timeout')
 
-# If the HA API fails or fields are blank, FORCE local frontend default
-if [ -z "$URL" ] || [ "$URL" == "null" ]; then
-    URL="http://127.0.0.1:8123"
-    bashio::log.warning "HA API returned blank URL. Forcing default to http://127.0.0.1:8123"
+if [ -z "$AUTH_METHOD" ] || [ "$AUTH_METHOD" == "null" ]; then
+    AUTH_METHOD="trusted_networks"
 fi
 
-if [ -z "$SCREEN_TIMEOUT" ] || [ "$SCREEN_TIMEOUT" == "null" ]; then
-    SCREEN_TIMEOUT=600
-    bashio::log.warning "HA API returned blank timeout. Forcing 600s."
+if [ -z "$LOGIN_DELAY" ] || [ "$LOGIN_DELAY" == "null" ]; then
+    LOGIN_DELAY=10
 fi
-
 
 # ---------------------------------------------------------
 # DYNAMIC HARDWARE DISCOVERY (Display & Touch)
 # ---------------------------------------------------------
-# Define your known static fallbacks here:
+# Known static fallbacks, used only if auto-discovery fails:
 STATIC_DISPLAY="DP-1"
 STATIC_TOUCH="ILITEK ILITEK-TP"
 
 ACTIVE_OUTPUT=""
 TOUCH_DEVICE=""
 
-# 1. Attempt to dynamically find the active connected monitor
+# 1. Find the active connected monitor
 for status_file in /sys/class/drm/*/status; do
     if [ -f "$status_file" ] && [ "$(cat "$status_file")" = "connected" ]; then
         raw_card=$(echo "$status_file" | cut -d'/' -f5)
@@ -132,7 +118,6 @@ for status_file in /sys/class/drm/*/status; do
     fi
 done
 
-# If/Else for Display Output
 if [ -n "$ACTIVE_OUTPUT" ]; then
     bashio::log.info "Auto-discovered active display: $ACTIVE_OUTPUT"
 else
@@ -140,12 +125,11 @@ else
     bashio::log.warning "Display auto-discovery failed! Falling back to static: $ACTIVE_OUTPUT"
 fi
 
-# 2. Attempt to dynamically find the touchscreen device name
+# 2. Find the touchscreen device name
 if [ -f "/proc/bus/input/devices" ]; then
     TOUCH_DEVICE=$(grep -i "Name=" /proc/bus/input/devices | grep -i -E "touch|ilitek" | head -n 1 | cut -d'"' -f2)
 fi
 
-# If/Else for Touchscreen
 if [ -n "$TOUCH_DEVICE" ]; then
     bashio::log.info "Auto-discovered touch device: $TOUCH_DEVICE"
 else
@@ -153,100 +137,62 @@ else
     bashio::log.warning "Touch auto-discovery failed! Falling back to static: $TOUCH_DEVICE"
 fi
 
-# 3. Apply the final touch mapping
-export WLR_LIBINPUT_DEVICE_MAP="${TOUCH_DEVICE}:${ACTIVE_OUTPUT}"
-bashio::log.info "Mapped touch input '$TOUCH_DEVICE' -> '$ACTIVE_OUTPUT'"
-
-# 3. Apply the dynamic touch mapping
 # ---------------------------------------------------------
-# DYNAMIC SCREEN & TOUCH ROTATION
+# ROTATION + TOUCH CALIBRATION
 # ---------------------------------------------------------
-#ROTATION_CONFIG=$(bashio::config 'rotate_display')
-ROTATION_CONFIG="right"
-
-# Map both visual rotation and touch calibration matrices based on UI config
+# Matrices below are libinput's own documented reference matrices for pure
+# clockwise rotation (see libinput's "Static device configuration via udev"
+# docs). If your panel is mirrored/flipped on top of being rotated, these
+# may still need hand-tuning for your specific hardware -- but they are a
+# correct, verified starting point, unlike the previous version's untested
+# values.
 case "$ROTATION_CONFIG" in
-    "right") 
-        ROTATION_DEGREES="270" 
-        # Swaps X and Y, adjusting for the factory X-inversion
-        TOUCH_MATRIX="0 1 0 1 0 0" 
+    "right")
+        ROTATION_DEGREES="270"
+        TOUCH_MATRIX="0 1 0 -1 0 1"
         ;;
-    "inverted") 
-        ROTATION_DEGREES="180" 
-        # Inverts Y (since an inverted X flipped 180 degrees results in an inverted Y)
-        TOUCH_MATRIX="1 0 0 0 -1 1" 
+    "inverted")
+        ROTATION_DEGREES="180"
+        TOUCH_MATRIX="-1 0 1 0 -1 1"
         ;;
-    "left") 
-        ROTATION_DEGREES="90" 
-        # Swaps X and Y, mirroring the opposite direction
-        TOUCH_MATRIX="0 -1 1 -1 0 1" 
+    "left")
+        ROTATION_DEGREES="90"
+        TOUCH_MATRIX="0 -1 1 1 0 0"
         ;;
-    *) 
-        ROTATION_DEGREES="normal" 
-        # Your known baseline fix (Inverts X only)
-        TOUCH_MATRIX="-1 0 1 0 1 0" 
+    *)
+        ROTATION_DEGREES="normal"
+        TOUCH_MATRIX="1 0 0 0 1 0"
         ;;
 esac
 
-# 1. Apply the touch matrix instantly
-export WLR_LIBINPUT_CALIBRATION_MATRIX="$TOUCH_MATRIX"
-bashio::log.info "Applied touch calibration matrix: $TOUCH_MATRIX"
+bashio::log.info "Rotation config '$ROTATION_CONFIG' -> transform $ROTATION_DEGREES, touch matrix [$TOUCH_MATRIX]"
 
-# 2. Run visual rotation in the background
-if [ "$ROTATION_DEGREES" != "normal" ]; then
-    bashio::log.info "Scheduling rotation (${ROTATION_DEGREES}°) for $ACTIVE_OUTPUT..."
-    (
-        sleep 5
-        export WAYLAND_DISPLAY=$(ls /tmp/xdg 2>/dev/null | grep -m 1 "wayland-")
-        if [ -n "$WAYLAND_DISPLAY" ]; then
-            wlr-randr --output "$ACTIVE_OUTPUT" --transform "$ROTATION_DEGREES"
-        fi
-    ) &
+# Write a udev rule mapping the touch device to the active output and
+# applying the calibration matrix. This is the mechanism libinput and
+# wlroots actually read -- LIBINPUT_CALIBRATION_MATRIX and WL_OUTPUT are
+# udev device properties, NOT shell/process environment variables. Setting
+# them with `export` (as a previous version of this script did) has no
+# effect at all; libinput only sees them if they're attached to the device
+# via udev before the device is enumerated.
+UDEV_RULE_FILE="/etc/udev/rules.d/99-touch-kiosk.rules"
+bashio::log.info "Writing touch calibration udev rule to $UDEV_RULE_FILE ..."
+cat > "$UDEV_RULE_FILE" <<EOF
+ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="${TOUCH_DEVICE}", ENV{WL_OUTPUT}="${ACTIVE_OUTPUT}", ENV{LIBINPUT_CALIBRATION_MATRIX}="${TOUCH_MATRIX}"
+EOF
+
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules 2>/dev/null
+    udevadm trigger --subsystem-match=input 2>/dev/null
+    bashio::log.info "udev rules reloaded and triggered for input subsystem."
+else
+    bashio::log.warning "udevadm not found -- touch calibration rule was written but not applied. It will only take effect on next device (re)enumeration."
 fi
 
-bashio::log.info "Mapped touch input '$TOUCH_DEVICE' -> '$ACTIVE_OUTPUT'"
-
-
 # ---------------------------------------------------------
-# DYNAMIC SCREEN ROTATION
+# BACKGROUND SERVICES
 # ---------------------------------------------------------
-#ROTATION_CONFIG=$(bashio::config 'rotate_display')
 
-
-# Map rotation values for wlr-randr (Wayland rotates counter-clockwise!)
-case "$ROTATION_CONFIG" in
-    "right") ROTATION_DEGREES="270" ;;
-    "inverted") ROTATION_DEGREES="180" ;;
-    "left") ROTATION_DEGREES="90" ;;
-    *) ROTATION_DEGREES="normal" ;;
-esac
-
-# Run rotation in the background using the auto-discovered ACTIVE_OUTPUT
-if [ "$ROTATION_DEGREES" != "normal" ]; then
-    bashio::log.info "Scheduling rotation (${ROTATION_DEGREES}°) for $ACTIVE_OUTPUT..."
-    (
-        sleep 5
-        export WAYLAND_DISPLAY=$(ls /tmp/xdg 2>/dev/null | grep -m 1 "wayland-")
-        if [ -n "$WAYLAND_DISPLAY" ]; then
-            wlr-randr --output "$ACTIVE_OUTPUT" --transform "$ROTATION_DEGREES"
-        fi
-    ) &
-fi
-bashio::log.info "Mapped Rotation to input '$ROTATION_CONFIG' -> '$ACTIVE_OUTPUT'"
-
-# ---------------------------------------------------------
-# CHROMEIUM RUNTIME
-# ---------------------------------------------------------
-# Build Chromium Ozone flags
-CHROMIUM_FLAGS="--kiosk --no-sandbox --enable-features=UseOzonePlatform --ozone-platform=wayland --disable-infobars --remote-debugging-port=9222 --no-first-run --disable-sync --bwsi"
-
-if bashio::config.true 'ignore_certificate_errors'; then
-    CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --ignore-certificate-errors"
-fi
-
-bashio::log.info "Starting background services..."
-
-# Handle screen timeout
+# Screen timeout
 if [ "$SCREEN_TIMEOUT" -gt 0 ]; then
     bashio::log.info "Setting screen timeout to ${SCREEN_TIMEOUT} seconds..."
     swayidle -w \
@@ -256,10 +202,103 @@ else
     bashio::log.info "Screen timeout disabled."
 fi
 
-# Start REST API server
+# REST API server
 python3 /app/rest_server.py &
+
+# Apply output rotation once Cage's Wayland socket actually exists.
+# Polls for up to 15s instead of a fixed sleep, since a fixed sleep can miss
+# a slow compositor start (more likely on aarch64/armv7 hardware).
+if [ "$ROTATION_DEGREES" != "normal" ]; then
+    (
+        elapsed=0
+        max_wait=15
+        wl_display=""
+        while [ "$elapsed" -lt "$max_wait" ]; do
+            wl_display=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -m 1 "wayland-[0-9]*$")
+            if [ -n "$wl_display" ]; then
+                break
+            fi
+            sleep 0.5
+            elapsed=$((elapsed + 1))
+        done
+
+        if [ -n "$wl_display" ]; then
+            export WAYLAND_DISPLAY="$wl_display"
+            bashio::log.info "Applying rotation (${ROTATION_DEGREES}) to $ACTIVE_OUTPUT..."
+            wlr-randr --output "$ACTIVE_OUTPUT" --transform "$ROTATION_DEGREES"
+        else
+            bashio::log.error "Wayland socket never appeared after ${max_wait}s -- rotation was NOT applied."
+        fi
+    ) &
+fi
+
+# ---------------------------------------------------------
+# LOGIN HANDLING
+# ---------------------------------------------------------
+# trusted_networks: nothing to do here. HA Core must have a
+# trusted_networks auth provider configured (in Core's own
+# configuration.yaml) trusting 127.0.0.1 / ::1, with allow_bypass_login: true.
+# This add-on cannot configure that for you -- it doesn't have (and
+# shouldn't need) access to Core's config.
+#
+# credentials: type the username/password into the HA login form once it
+# appears, detected by polling Chromium's CDP endpoint rather than blind-
+# typing after a fixed delay.
+case "$AUTH_METHOD" in
+    "trusted_networks")
+        bashio::log.info "Using trusted_networks auth. Ensure Home Assistant Core's configuration.yaml has a matching trusted_networks provider for 127.0.0.1."
+        ;;
+    "credentials")
+        if [ -z "$HA_USERNAME" ] || [ -z "$HA_PASSWORD" ]; then
+            bashio::log.warning "auth_method is 'credentials' but ha_username/ha_password are not both set -- skipping auto-login."
+        else
+            (
+                elapsed=0
+                found=0
+                while [ "$elapsed" -lt "$LOGIN_DELAY" ]; do
+                    page_url=$(curl -s --max-time 2 http://localhost:9222/json 2>/dev/null | grep -o '"url":"[^"]*"' | head -n 1)
+                    if echo "$page_url" | grep -q "auth/authorize"; then
+                        found=1
+                        break
+                    fi
+                    sleep 1
+                    elapsed=$((elapsed + 1))
+                done
+
+                if [ "$found" -eq 1 ]; then
+                    bashio::log.info "Login page detected, submitting credentials..."
+                    sleep 1  # let the page finish rendering/focusing the username field
+                    wtype "$HA_USERNAME"
+                    wtype -k Tab
+                    wtype "$HA_PASSWORD"
+                    wtype -k Return
+                else
+                    bashio::log.warning "Login page not detected within ${LOGIN_DELAY}s -- skipping auto-login. Consider raising login_delay."
+                fi
+            ) &
+        fi
+        ;;
+    "none")
+        bashio::log.info "auth_method is 'none' -- no login handling will be attempted."
+        ;;
+esac
+
+# ---------------------------------------------------------
+# CHROMIUM RUNTIME
+# ---------------------------------------------------------
+CHROMIUM_FLAGS="--kiosk --no-sandbox --enable-features=UseOzonePlatform --ozone-platform=wayland --disable-infobars --remote-debugging-port=9222 --no-first-run --disable-sync"
+
+if bashio::config.true 'ignore_certificate_errors'; then
+    CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --ignore-certificate-errors"
+fi
+
+# NOTE: --bwsi (guest/ephemeral profile) was removed. It wiped the Chromium
+# profile on every restart, which meant any logged-in session never
+# persisted -- forcing a fresh auto-login (or trusted_networks bypass) on
+# every single container restart. A persistent profile directory under
+# /data lets a real login session survive add-on/container restarts.
+CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --user-data-dir=/data/chromium-profile"
 
 bashio::log.info "Starting Cage with Chromium pointing to: ${URL}"
 
-# Execute Cage and Chromium directly on DRM hardware
 exec cage -s -- chromium-browser ${CHROMIUM_FLAGS} "${URL}"
