@@ -12,6 +12,7 @@ url: "https://github.com/trooperthorn/ha_app_kiosk/"
 # just be the container's own loopback). It's also what makes the
 # trusted_networks auth provider trivially trust this add-on's requests.
 host_network: true
+hassio_api: true
 
 arch:
   - aarch64
