@@ -222,8 +222,8 @@ ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="${TOUCH_DEVICE}", ENV{WL_O
 EOF
 
 if command -v udevadm >/dev/null 2>&1; then
-    udevadm control --reload-rules 2>/dev/null
-    udevadm trigger --subsystem-match=input 2>/dev/null
+    udevadm control --reload-rules 2>/dev/null || true
+    udevadm trigger --subsystem-match=input 2>/dev/null || true
     bashio::log.info "udev rules reloaded and triggered for input subsystem."
 else
     bashio::log.warning "udevadm not found -- touch calibration rule was written but not applied. It will only take effect on next device (re)enumeration."
@@ -298,7 +298,9 @@ case "$AUTH_METHOD" in
                 # e.g. "10.5" -- bash's [ -lt ] only does integers, so this
                 # truncates to whole seconds for the loop bound.
                 login_delay_int="${LOGIN_DELAY%.*}"
-                [ -z "$login_delay_int" ] && login_delay_int=10
+                if [ -z "$login_delay_int" ]; then
+                    login_delay_int=10
+                fi
 
                 elapsed=0
                 found=0
