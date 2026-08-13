@@ -1,6 +1,6 @@
 name: "HAOS Wayland Kiosk"
 description: "Wayland-native kiosk dashboard using Cage and Chromium"
-version: "2026.08.13"
+version: "2026.08.13.2"
 slug: "app_kiosk"
 init: false
 startup: application
