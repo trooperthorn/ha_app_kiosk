@@ -1,0 +1,138 @@
+blueprint:
+  name: HomeSeer WD200+ Scene Controller
+  description: >-
+    Run actions on Central Scene events from a HomeSeer HS-WD200+ (or
+    HS-WS200+) paddle: single/double/triple/4x/5x taps, hold and release,
+    on both the up and down paddle. Events are push notifications from the
+    device (no polling), so latency is typically well under 100 ms.
+
+
+    Requires the device to be included with Central Scene support (any
+    recent firmware; multi-taps work out of the box on the WD200+).
+  domain: automation
+  author: TrooperThorn
+  input:
+    homeseer_device:
+      name: HomeSeer switch/dimmer
+      description: The WD200+/WS200+ device sending Central Scene events
+      selector:
+        device:
+          filter:
+            - integration: zwave_js
+              manufacturer: HomeSeer Technologies
+    up_1x:
+      name: Up paddle - single tap
+      default: []
+      selector:
+        action: {}
+    up_2x:
+      name: Up paddle - double tap
+      default: []
+      selector:
+        action: {}
+    up_3x:
+      name: Up paddle - triple tap
+      default: []
+      selector:
+        action: {}
+    up_4x:
+      name: Up paddle - quadruple tap
+      default: []
+      selector:
+        action: {}
+    up_5x:
+      name: Up paddle - quintuple tap
+      default: []
+      selector:
+        action: {}
+    up_hold:
+      name: Up paddle - hold
+      default: []
+      selector:
+        action: {}
+    up_release:
+      name: Up paddle - release after hold
+      default: []
+      selector:
+        action: {}
+    down_1x:
+      name: Down paddle - single tap
+      default: []
+      selector:
+        action: {}
+    down_2x:
+      name: Down paddle - double tap
+      default: []
+      selector:
+        action: {}
+    down_3x:
+      name: Down paddle - triple tap
+      default: []
+      selector:
+        action: {}
+    down_4x:
+      name: Down paddle - quadruple tap
+      default: []
+      selector:
+        action: {}
+    down_5x:
+      name: Down paddle - quintuple tap
+      default: []
+      selector:
+        action: {}
+    down_hold:
+      name: Down paddle - hold
+      default: []
+      selector:
+        action: {}
+    down_release:
+      name: Down paddle - release after hold
+      default: []
+      selector:
+        action: {}
+
+mode: parallel
+max: 10
+max_exceeded: silent
+
+trigger:
+  - platform: event
+    event_type: zwave_js_value_notification
+    event_data:
+      device_id: !input homeseer_device
+      command_class: 91
+
+action:
+  - variables:
+      # Scene 001 = up paddle, 002 = down paddle on HomeSeer 200-series
+      scene: "{{ trigger.event.data.property_key }}"
+      press: "{{ trigger.event.data.value }}"
+  - choose:
+      - conditions: "{{ scene == '001' and press == 'KeyPressed' }}"
+        sequence: !input up_1x
+      - conditions: "{{ scene == '001' and press == 'KeyPressed2x' }}"
+        sequence: !input up_2x
+      - conditions: "{{ scene == '001' and press == 'KeyPressed3x' }}"
+        sequence: !input up_3x
+      - conditions: "{{ scene == '001' and press == 'KeyPressed4x' }}"
+        sequence: !input up_4x
+      - conditions: "{{ scene == '001' and press == 'KeyPressed5x' }}"
+        sequence: !input up_5x
+      - conditions: "{{ scene == '001' and press == 'KeyHeldDown' }}"
+        sequence: !input up_hold
+      - conditions: "{{ scene == '001' and press == 'KeyReleased' }}"
+        sequence: !input up_release
+      - conditions: "{{ scene == '002' and press == 'KeyPressed' }}"
+        sequence: !input down_1x
+      - conditions: "{{ scene == '002' and press == 'KeyPressed2x' }}"
+        sequence: !input down_2x
+      - conditions: "{{ scene == '002' and press == 'KeyPressed3x' }}"
+        sequence: !input down_3x
+      - conditions: "{{ scene == '002' and press == 'KeyPressed4x' }}"
+        sequence: !input down_4x
+      - conditions: "{{ scene == '002' and press == 'KeyPressed5x' }}"
+        sequence: !input down_5x
+      - conditions: "{{ scene == '002' and press == 'KeyHeldDown' }}"
+        sequence: !input down_hold
+      - conditions: "{{ scene == '002' and press == 'KeyReleased' }}"
+        sequence: !input down_release

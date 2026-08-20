@@ -1,0 +1,152 @@
+blueprint:
+  name: HomeSeer WD200+ Status LED Indicator
+  description: >-
+    Binds one status-mode LED on a HomeSeer HS-WD200+ dimmer to the state of
+    any entity: when the entity enters the chosen "active" state the LED
+    shows the active color (optionally blinking); otherwise it shows the
+    inactive color. Examples: bottom LED red when the garage door is open,
+    LED 3 blinking yellow while the washer is running.
+
+
+    Uses only zwave_js.set_config_parameter (parameters 13, 21-27, 30, 31) —
+    no changes to the zwave_js integration are needed.
+  domain: automation
+  author: TrooperThorn
+  input:
+    source_entity:
+      name: Entity to watch
+      selector:
+        entity: {}
+    active_states:
+      name: Active state(s)
+      description: Comma-separated list of states that count as active (e.g. "on" or "open,opening")
+      default: "on"
+      selector:
+        text: {}
+    homeseer_device:
+      name: WD200+ dimmer(s)
+      selector:
+        device:
+          multiple: true
+          filter:
+            - integration: zwave_js
+              manufacturer: HomeSeer Technologies
+    led:
+      name: LED number
+      description: 1 = bottom LED, 7 = top LED
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 7
+          mode: box
+    color_active:
+      name: Active color
+      default: red
+      selector:
+        select:
+          options: ["off", "red", "green", "blue", "magenta", "yellow", "cyan", "white"]
+    color_inactive:
+      name: Inactive color
+      description: Use "off" to turn the LED off when inactive
+      default: "off"
+      selector:
+        select:
+          options: ["off", "red", "green", "blue", "magenta", "yellow", "cyan", "white"]
+    blink_when_active:
+      name: Blink while active
+      default: false
+      selector:
+        boolean: {}
+    blink_frequency:
+      name: Blink frequency
+      description: On/off period in 100 ms steps (5 = 500 ms). Shared by all blinking LEDs on the device.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    manage_status_mode:
+      name: Keep dimmer in Custom Status mode
+      description: Sets parameter 13 = 1 on every update so status LEDs stay visible
+      default: true
+      selector:
+        boolean: {}
+
+mode: queued
+max: 10
+
+trigger:
+  - platform: state
+    entity_id: !input source_entity
+
+variables:
+  active_states_input: !input active_states
+  color_active_input: !input color_active
+  color_inactive_input: !input color_inactive
+  led_input: !input led
+  blink_input: !input blink_when_active
+  blink_frequency_input: !input blink_frequency
+  manage_status_mode_input: !input manage_status_mode
+  active_list: "{{ active_states_input.split(',') | map('trim') | map('lower') | list }}"
+  is_active: "{{ trigger.to_state.state | lower in active_list }}"
+  color_codes:
+    "off": 0
+    red: 1
+    green: 2
+    blue: 3
+    magenta: 4
+    yellow: 5
+    cyan: 6
+    white: 7
+  led_num: "{{ led_input | int }}"
+  led_bit: "{{ 2 ** (led_input | int - 1) }}"
+  target_color: "{{ color_active_input if is_active else color_inactive_input }}"
+
+condition:
+  # Ignore unavailable/unknown flaps and attribute-only updates
+  - condition: template
+    value_template: >-
+      {{ trigger.to_state is not none
+         and trigger.to_state.state not in ['unavailable', 'unknown']
+         and (trigger.from_state is none or trigger.from_state.state != trigger.to_state.state) }}
+
+action:
+  - if: "{{ manage_status_mode_input }}"
+    then:
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: !input homeseer_device
+        data:
+          parameter: 13
+          value: 1
+  - action: zwave_js.set_config_parameter
+    target:
+      device_id: !input homeseer_device
+    data:
+      parameter: "{{ 20 + led_num }}"
+      value: "{{ color_codes[target_color | lower] }}"
+  - if: "{{ blink_input and is_active }}"
+    then:
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: !input homeseer_device
+        data:
+          parameter: 30
+          value: "{{ blink_frequency_input | int }}"
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: !input homeseer_device
+        data:
+          parameter: 31
+          bitmask: "{{ led_bit }}"
+          value: 1
+    else:
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: !input homeseer_device
+        data:
+          parameter: 31
+          bitmask: "{{ led_bit }}"
+          value: 0
