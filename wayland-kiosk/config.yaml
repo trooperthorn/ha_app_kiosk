@@ -1,6 +1,6 @@
 name: "HAOS Wayland Kiosk"
 description: "Wayland-native kiosk dashboard using Cage and Chromium"
-version: "2026.08.20.1"
+version: "2026.08.20.2"
 slug: "app_kiosk"
 init: false
 startup: application
@@ -29,19 +29,16 @@ devices:
   - /dev/dri:/dev/dri:rwm
   - /dev/input:/dev/input:rwm
 
-# AppArmor confinement (the Supervisor's default profile applied to any
-# add-on that doesn't ship its own apparmor.txt) does not allow writing
-# under /etc/udev/rules.d/ or issuing the udevadm control/trigger calls
-# run.sh needs for touch-rotation calibration. Under confinement those
-# calls fail with Permission denied -- and because run.sh runs under
-# bashio's errexit, that failure previously killed the whole script before
-# Cage/Chromium ever started (the "app fails to load" symptom). udev: true
-# above only grants access to the device nodes/events themselves, not to
-# writing rule files, so it does not cover this. Disabling AppArmor for
-# this add-on is required for the udev-based touch calibration to work;
-# run.sh also now treats a failed rule write as non-fatal so the kiosk
-# display still starts even if this is ever re-enabled.
-apparmor: false
+# NOTE: do NOT set `apparmor: false` here. It was tried as a fix for a
+# suspected udev-write permission issue and made things worse: Supervisor
+# applies the device cgroup rules for the `devices:` list above together
+# with the AppArmor profile, so disabling AppArmor broke access to
+# /dev/dri entirely (wlroots: "Failed to open device: '/dev/dri/card0':
+# Operation not permitted", 0 GPUs found, cage exits, container dies).
+# The default (confined) profile is required for the explicit device
+# passthrough above to actually work. run.sh's udev-rule write for touch
+# calibration is guarded to fail soft under confinement (see run.sh) so it
+# no longer needs apparmor disabled to avoid crashing the add-on.
 
 # --- Storage and Limits ---
 map:
