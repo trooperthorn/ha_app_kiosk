@@ -1,0 +1,192 @@
+# =============================================================================
+# Zooz ZEN14 Double Outdoor Plug support package — zwave_js
+# =============================================================================
+# Parameter reference (per Zooz KB, firmware-current):
+#   1  LED indicator        0 = on when plug on (default), 1 = on when plug
+#                           off, 2 = always off        [6x button toggles]
+#   2  Auto-OFF timer, Outlet 1   minutes, 0 = disabled (4 bytes)
+#   3  Auto-OFF timer, Outlet 2   minutes, 0 = disabled (4 bytes)
+#   4  Auto-ON  timer, Outlet 1   minutes, 0 = disabled (4 bytes)
+#   5  Auto-ON  timer, Outlet 2   minutes, 0 = disabled (4 bytes)
+#   6  Status after power failure 0 = both off, 1 = both on, 2 = restore
+#                           (default), 3 = O1 on/O2 off, 4 = O1 off/O2 on
+#                           (3/4 need FW >= 2.20)      [10x button toggles]
+#   7  LED brightness       0 = high, 1 = medium, 2 = low (default)
+#                                                      [8x button toggles]
+#   8  Z-Wave button        0 = physical control disabled, 1 = enabled
+#
+# The two outlets appear as separate switch entities (Multi Channel);
+# Group 2 sends Basic Set on state change for direct association control.
+# =============================================================================
+
+script:
+  zen14_set_led:
+    alias: "ZEN14: Set LED indicator"
+    icon: mdi:led-outline
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Plug(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: Zooz
+      led_mode:
+        name: LED mode
+        default: on_when_on
+        selector:
+          select:
+            options: ["on_when_on", "on_when_off", "always_off"]
+      brightness:
+        name: LED brightness
+        default: low
+        selector:
+          select:
+            options: ["high", "medium", "low"]
+    sequence:
+      - variables:
+          led_codes: { on_when_on: 0, on_when_off: 1, always_off: 2 }
+          brightness_codes: { high: 0, medium: 1, low: 2 }
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 1
+          value: "{{ led_codes[led_mode | default('on_when_on')] }}"
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 7
+          value: "{{ brightness_codes[brightness | default('low')] }}"
+
+  zen14_set_auto_timers:
+    alias: "ZEN14: Set auto on/off timers"
+    description: >-
+      Sets the auto-off and/or auto-on timer (minutes, 0 = disabled) for one
+      outlet. Parameters 2-5. Leave a timer field empty to skip it.
+    icon: mdi:timer-outline
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Plug(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: Zooz
+      outlet:
+        name: Outlet
+        required: true
+        default: 1
+        selector:
+          number:
+            min: 1
+            max: 2
+            mode: box
+      auto_off_minutes:
+        name: Auto-OFF after (minutes)
+        selector:
+          number:
+            min: 0
+            max: 65535
+            mode: box
+      auto_on_minutes:
+        name: Auto-ON after (minutes)
+        selector:
+          number:
+            min: 0
+            max: 65535
+            mode: box
+    sequence:
+      - if: "{{ auto_off_minutes is defined and auto_off_minutes is not none }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: "{{ 1 + outlet | int }}"   # 2 = outlet 1, 3 = outlet 2
+              value: "{{ auto_off_minutes | int }}"
+      - if: "{{ auto_on_minutes is defined and auto_on_minutes is not none }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: "{{ 3 + outlet | int }}"   # 4 = outlet 1, 5 = outlet 2
+              value: "{{ auto_on_minutes | int }}"
+
+  zen14_set_power_failure_behavior:
+    alias: "ZEN14: Set power failure recovery"
+    description: Parameter 6. The outlet 1/2 split values need firmware 2.20+.
+    icon: mdi:power-plug-off
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Plug(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: Zooz
+      behavior:
+        name: Recovery behavior
+        required: true
+        default: restore
+        selector:
+          select:
+            options: ["both_off", "both_on", "restore", "outlet1_on_outlet2_off", "outlet1_off_outlet2_on"]
+    sequence:
+      - variables:
+          behavior_codes:
+            both_off: 0
+            both_on: 1
+            restore: 2
+            outlet1_on_outlet2_off: 3
+            outlet1_off_outlet2_on: 4
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 6
+          value: "{{ behavior_codes[behavior] }}"
+
+  zen14_set_button_control:
+    alias: "ZEN14: Enable/disable physical button"
+    description: Parameter 8. When disabled, outlets are remote-control only (child lock).
+    icon: mdi:gesture-tap-button
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Plug(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: Zooz
+      enabled:
+        name: Physical button enabled
+        required: true
+        default: true
+        selector:
+          boolean:
+    sequence:
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 8
+          value: "{{ 1 if enabled else 0 }}"

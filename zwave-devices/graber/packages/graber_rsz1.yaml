@@ -1,0 +1,85 @@
+# =============================================================================
+# Graber / Springs Window Fashions RSZ1 roller shade support package — zwave_js
+# =============================================================================
+# The RSZ1 exposes no configuration parameters; it is a battery Multilevel
+# Switch device that Home Assistant models as a cover entity natively.
+# This package adds group/preset ergonomics and battery-awareness on top.
+#
+# Performance notes:
+#  - State reports arrive via the Lifeline association; do not poll.
+#  - Keep the wakeup interval at the default 12 h — it only affects queued
+#    (re)configuration, not motion commands, and shorter intervals drain
+#    the battery.
+# =============================================================================
+
+script:
+  rsz1_set_shades:
+    alias: "RSZ1: Set shade position"
+    description: Moves one or more shades to a position (0 = closed, 100 = open).
+    icon: mdi:roller-shade
+    mode: parallel
+    max: 10
+    fields:
+      shades:
+        name: Shade(s)
+        required: true
+        selector:
+          entity:
+            multiple: true
+            filter:
+              - domain: cover
+                integration: zwave_js
+      position:
+        name: Position
+        required: true
+        default: 100
+        selector:
+          number:
+            min: 0
+            max: 100
+            unit_of_measurement: "%"
+    sequence:
+      - action: cover.set_cover_position
+        target:
+          entity_id: "{{ shades }}"
+        data:
+          position: "{{ position | int }}"
+
+  rsz1_preset:
+    alias: "RSZ1: Shade preset"
+    description: >-
+      Moves shades to a named preset: open, closed, privacy (25%),
+      half (50%), or glare (75%).
+    icon: mdi:roller-shade-closed
+    mode: parallel
+    max: 10
+    fields:
+      shades:
+        name: Shade(s)
+        required: true
+        selector:
+          entity:
+            multiple: true
+            filter:
+              - domain: cover
+                integration: zwave_js
+      preset:
+        name: Preset
+        required: true
+        default: open
+        selector:
+          select:
+            options: ["open", "glare", "half", "privacy", "closed"]
+    sequence:
+      - variables:
+          preset_positions:
+            open: 100
+            glare: 75
+            half: 50
+            privacy: 25
+            closed: 0
+      - action: cover.set_cover_position
+        target:
+          entity_id: "{{ shades }}"
+        data:
+          position: "{{ preset_positions[preset] }}"

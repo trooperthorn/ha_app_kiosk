@@ -17,7 +17,7 @@ Everything here is built exclusively on stable, public `zwave_js` surfaces:
 ## Contents
 
 ```
-zwave-homeseer/
+zwave-devices/homeseer/
 ├── packages/
 │   └── homeseer_wd200.yaml                 # Scripts: LED color/blink/pattern, status mode, ramp rates
 └── blueprints/automation/homeseer/

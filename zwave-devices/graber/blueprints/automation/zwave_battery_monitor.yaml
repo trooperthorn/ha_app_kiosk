@@ -1,0 +1,42 @@
+blueprint:
+  name: Z-Wave Battery Monitor
+  description: >-
+    Runs actions (e.g. a notification) when any watched battery sensor drops
+    below a threshold. Built for battery Z-Wave devices like the Graber RSZ1
+    roller shade, but works with any battery sensor entity.
+  domain: automation
+  author: TrooperThorn
+  input:
+    battery_sensors:
+      name: Battery sensor(s)
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: sensor
+              device_class: battery
+    threshold:
+      name: Low battery threshold
+      default: 25
+      selector:
+        number:
+          min: 5
+          max: 75
+          unit_of_measurement: "%"
+    actions:
+      name: Actions to run
+      description: >-
+        The triggering entity is available as trigger.entity_id, its level as
+        trigger.to_state.state.
+      selector:
+        action: {}
+
+mode: parallel
+max: 20
+
+trigger:
+  - platform: numeric_state
+    entity_id: !input battery_sensors
+    below: !input threshold
+
+action: !input actions

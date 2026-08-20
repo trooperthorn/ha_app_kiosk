@@ -1,0 +1,96 @@
+blueprint:
+  name: GE Motion Switch Mode Schedule
+  description: >-
+    Switches GE/Jasco Enbrighten motion switches (26931/ZW4006) between
+    operation modes on a daily schedule — e.g. Occupancy with a 5-minute
+    timeout during the day, Vacancy at night so the light never auto-turns-on
+    while you sleep.
+  domain: automation
+  author: TrooperThorn
+  input:
+    motion_switches:
+      name: Motion switch(es)
+      selector:
+        device:
+          multiple: true
+          filter:
+            - integration: zwave_js
+              manufacturer: GE/Jasco
+            - integration: zwave_js
+              manufacturer: Jasco Products
+            - integration: zwave_js
+              manufacturer: GE
+    day_time:
+      name: Day schedule starts at
+      default: "07:00:00"
+      selector:
+        time: {}
+    day_mode:
+      name: Day operation mode
+      default: occupancy
+      selector:
+        select:
+          options: ["occupancy", "vacancy", "manual"]
+    day_timeout:
+      name: Day motion timeout
+      default: "5_minutes"
+      selector:
+        select:
+          options: ["test_5s", "1_minute", "5_minutes", "15_minutes", "30_minutes", "disabled"]
+    night_time:
+      name: Night schedule starts at
+      default: "22:00:00"
+      selector:
+        time: {}
+    night_mode:
+      name: Night operation mode
+      default: vacancy
+      selector:
+        select:
+          options: ["occupancy", "vacancy", "manual"]
+    night_timeout:
+      name: Night motion timeout
+      default: "1_minute"
+      selector:
+        select:
+          options: ["test_5s", "1_minute", "5_minutes", "15_minutes", "30_minutes", "disabled"]
+
+mode: queued
+max: 4
+
+trigger:
+  - platform: time
+    at: !input day_time
+    id: day
+  - platform: time
+    at: !input night_time
+    id: night
+
+variables:
+  day_mode_input: !input day_mode
+  day_timeout_input: !input day_timeout
+  night_mode_input: !input night_mode
+  night_timeout_input: !input night_timeout
+  is_day: "{{ trigger.id == 'day' }}"
+  mode_codes: { manual: 1, vacancy: 2, occupancy: 3 }
+  timeout_codes:
+    test_5s: 0
+    1_minute: 1
+    5_minutes: 5
+    15_minutes: 15
+    30_minutes: 30
+    disabled: 255
+
+action:
+  - action: zwave_js.set_config_parameter
+    target:
+      device_id: !input motion_switches
+    data:
+      parameter: 3
+      value: "{{ mode_codes[day_mode_input if is_day else night_mode_input] }}"
+  - action: zwave_js.set_config_parameter
+    target:
+      device_id: !input motion_switches
+    data:
+      parameter: 1
+      value: "{{ timeout_codes[day_timeout_input if is_day else night_timeout_input] }}"

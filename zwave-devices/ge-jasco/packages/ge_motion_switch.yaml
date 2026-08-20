@@ -1,0 +1,137 @@
+# =============================================================================
+# GE/Jasco Enbrighten 26931 / ZW4006 In-Wall Smart Motion Switch — zwave_js
+# =============================================================================
+# Parameter reference (ZW4006, 500-series firmware):
+#   1   Timeout duration     0 = test (5 s), 1/5/15/30 minutes,
+#                            255 = disabled. Default 5.
+#   3   Operation mode       1 = Manual, 2 = Vacancy (manual on, auto off),
+#                            3 = Occupancy (auto on + auto off). Default 3.
+#   5   Invert switch        0 = No, 1 = Yes
+#   6   Motion sensor        0 = Disabled, 1 = Enabled
+#   13  Motion sensitivity   1 = High, 2 = Medium, 3 = Low
+#   14  Light sensing        0 = Disabled, 1 = Enabled (auto-on only if dark)
+#   15  Reset cycle          0 = disabled, 1 = 10 s, 2 = 20 s (default),
+#                            3 = 30 s, 4 = 45 s ... 110 = 27 min
+# Associations: Group 2 mirrors the local load, Group 3 mirrors the buttons.
+# =============================================================================
+
+script:
+  ge_motion_set_mode:
+    alias: "GE motion switch: Set operation mode"
+    description: >-
+      Switches between Occupancy (auto on/off), Vacancy (manual on, auto off)
+      and Manual modes, with optional timeout duration.
+    icon: mdi:motion-sensor
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Motion switch(es)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: GE/Jasco
+              - integration: zwave_js
+                manufacturer: Jasco Products
+              - integration: zwave_js
+                manufacturer: GE
+      operation_mode:
+        name: Operation mode
+        required: true
+        default: occupancy
+        selector:
+          select:
+            options: ["occupancy", "vacancy", "manual"]
+      timeout:
+        name: Motion timeout
+        description: How long the light stays on after the last motion
+        selector:
+          select:
+            options: ["test_5s", "1_minute", "5_minutes", "15_minutes", "30_minutes", "disabled"]
+    sequence:
+      - variables:
+          mode_codes: { manual: 1, vacancy: 2, occupancy: 3 }
+          timeout_codes:
+            test_5s: 0
+            1_minute: 1
+            5_minutes: 5
+            15_minutes: 15
+            30_minutes: 30
+            disabled: 255
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 3
+          value: "{{ mode_codes[operation_mode] }}"
+      - if: "{{ timeout is defined and timeout is not none }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: 1
+              value: "{{ timeout_codes[timeout] }}"
+
+  ge_motion_set_sensor:
+    alias: "GE motion switch: Configure motion sensor"
+    description: Enable/disable the PIR sensor and tune sensitivity and light sensing.
+    icon: mdi:motion-sensor
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Motion switch(es)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: GE/Jasco
+              - integration: zwave_js
+                manufacturer: Jasco Products
+              - integration: zwave_js
+                manufacturer: GE
+      sensor_enabled:
+        name: Motion sensor enabled
+        default: true
+        selector:
+          boolean:
+      sensitivity:
+        name: Motion sensitivity
+        selector:
+          select:
+            options: ["high", "medium", "low"]
+      light_sensing:
+        name: Light sensing (auto-on only when dark)
+        selector:
+          boolean:
+    sequence:
+      - variables:
+          sens_codes: { high: 1, medium: 2, low: 3 }
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 6
+          value: "{{ 1 if sensor_enabled | default(true) else 0 }}"
+      - if: "{{ sensitivity is defined and sensitivity is not none }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: 13
+              value: "{{ sens_codes[sensitivity] }}"
+      - if: "{{ light_sensing is defined and light_sensing is not none }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: 14
+              value: "{{ 1 if light_sensing in [true, 'true'] else 0 }}"
