@@ -11,6 +11,24 @@
   `docker ps -a` and `docker rm -f` any kiosk container Supervisor no
   longer manages.
 
+## 2026.08.20.4
+- Fix: rotation and screen-timeout now recover when the Supervisor API
+  rejects the add-on token during the startup window (403 at boot, 200
+  shortly after -- confirmed in the field with a direct curl test). The
+  rotation and swayidle background tasks re-read their option after the
+  compositor is up, polling up to ~60s for the API to recover, instead of
+  being stuck with boot-time fallback values (`rotate_display` "normal",
+  `screen_timeout` 600) for the whole run.
+- Fix: `wlr-randr --output *` is not valid -- wlr-randr has no wildcard
+  support and fails with "unknown output *" (seen in the field when the
+  swayidle timeout fired). Screen blanking and the REST `display_on` /
+  `display_off` endpoints therefore never worked. All of them now target
+  the discovered connector name, passed to rest_server.py via the
+  KIOSK_OUTPUT environment variable.
+- Added the `xwayland` package so Cage stops logging "Cannot find Xwayland
+  binary /usr/bin/Xwayland" at every start (Chromium runs native Wayland;
+  this only silences the error and covers X11 fallback paths).
+
 ## 2026.08.20.3
 - **Fix (root cause of "Found 0 GPUs" / EPERM on /dev/dri)**: the
   `devices:` list used the legacy Docker triplet syntax on directories

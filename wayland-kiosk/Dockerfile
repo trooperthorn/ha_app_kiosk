@@ -20,6 +20,7 @@ RUN apk add --no-cache \
     wtype \
     wlopm \
     swayidle \
+    xwayland \
     curl \
     python3 \
     py3-pip \
