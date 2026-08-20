@@ -91,7 +91,7 @@ for attempt in $(seq 1 5); do
 done
 
 if [ "$SUPERVISOR_READY" -eq 0 ]; then
-    bashio::log.error "Supervisor API did not respond after 5 attempts. ALL options will fall back to script defaults for this run -- rotation, login, dashboard, and every other setting will NOT reflect the add-on configuration screen. This is a known Supervisor-side issue (see home-assistant/supervisor#1930); try 'ha supervisor restart', then restart this add-on."
+    bashio::log.error "Supervisor API did not respond after 5 attempts. ALL options will fall back to script defaults for this run -- rotation, login, dashboard, and every other setting will NOT reflect the add-on configuration screen. If this clears up after one restart, it's the known transient Supervisor-side issue (home-assistant/supervisor#1930) -- try 'ha supervisor restart', then restart this add-on. If it happens on EVERY run (not just once), it's more likely a stale add-on registration/token -- this happens after an add-on's slug changes (this add-on's slug changed from haos_wayland_kiosk to app_kiosk) and Supervisor keeps serving requests against the old registration. That case needs a full UNINSTALL + reinstall of the add-on (not just rebuild/restart) so Supervisor issues a fresh token for the current slug."
 fi
 
 # ---------------------------------------------------------
@@ -217,37 +217,74 @@ bashio::log.info "Rotation config '$ROTATION_CONFIG' -> transform $ROTATION_DEGR
 # via udev before the device is enumerated.
 UDEV_RULE_FILE="/etc/udev/rules.d/99-touch-kiosk.rules"
 bashio::log.info "Writing touch calibration udev rule to $UDEV_RULE_FILE ..."
-# This write requires apparmor: false in config.yaml -- the Supervisor's
-# default confinement profile denies writes under /etc/udev/rules.d/, and
-# under bashio's errexit an unguarded failure here used to take down the
-# entire script (and with it Cage/Chromium) before the kiosk ever started.
-# Guard it explicitly so a permission failure only costs touch calibration,
-# never the display itself.
+# This write succeeds fine under the default (confined) AppArmor profile --
+# do NOT disable AppArmor to "fix" this, it breaks /dev/dri cgroup access
+# instead (see config.yaml). Guarded anyway: under bashio's errexit an
+# unguarded failure here would take down the entire script (and with it
+# Cage/Chromium) before the kiosk ever started, so a permission failure
+# only costs touch calibration, never the display itself.
 if cat > "$UDEV_RULE_FILE" <<EOF
 ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="${TOUCH_DEVICE}", ENV{WL_OUTPUT}="${ACTIVE_OUTPUT}", ENV{LIBINPUT_CALIBRATION_MATRIX}="${TOUCH_MATRIX}"
 EOF
 then
     if command -v udevadm >/dev/null 2>&1; then
-        udevadm control --reload-rules 2>/dev/null || true
-        udevadm trigger --subsystem-match=input 2>/dev/null || true
+        # Bounded with `timeout`: udevadm blocks waiting for a reply from
+        # udevd over its control socket, and in some container/host
+        # combinations nothing ever answers. Without a bound this has been
+        # observed adding ~60s to every boot before falling through via
+        # `|| true` -- worth avoiding even though it isn't fatal.
+        timeout 5 udevadm control --reload-rules 2>/dev/null || true
+        timeout 5 udevadm trigger --subsystem-match=input 2>/dev/null || true
         bashio::log.info "udev rules reloaded and triggered for input subsystem."
     else
         bashio::log.warning "udevadm not found -- touch calibration rule was written but not applied. It will only take effect on next device (re)enumeration."
     fi
 else
-    bashio::log.error "Permission denied writing $UDEV_RULE_FILE -- touch rotation calibration will be skipped. Check that apparmor: false is set in config.yaml. The kiosk display will still start."
+    bashio::log.error "Permission denied writing $UDEV_RULE_FILE -- touch rotation calibration will be skipped. The kiosk display will still start."
 fi
 
 # ---------------------------------------------------------
 # BACKGROUND SERVICES
 # ---------------------------------------------------------
 
+# Cage only creates its Wayland socket after it starts, so anything that
+# needs WAYLAND_DISPLAY (swayidle, the rotation call below) has to wait for
+# it rather than assume it's already there. Polls for up to 15s instead of
+# a fixed sleep, since a fixed sleep can miss a slow compositor start (more
+# likely on aarch64/armv7 hardware). Echoes the discovered socket name and
+# returns non-zero on timeout so callers can each log their own context.
+wait_for_wayland_socket() {
+    local elapsed=0
+    local max_wait=15
+    local wl_display=""
+    while [ "$elapsed" -lt "$max_wait" ]; do
+        wl_display=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -m 1 "wayland-[0-9]*$" || true)
+        if [ -n "$wl_display" ]; then
+            echo "$wl_display"
+            return 0
+        fi
+        sleep 0.5
+        elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
 # Screen timeout
 if [ "$SCREEN_TIMEOUT" -gt 0 ]; then
-    bashio::log.info "Setting screen timeout to ${SCREEN_TIMEOUT} seconds..."
-    swayidle -w \
-        timeout "$SCREEN_TIMEOUT" 'wlr-randr --output \* --off' \
-        resume 'wlr-randr --output \* --on' &
+    (
+        # Previously started immediately, before Cage's compositor existed --
+        # swayidle connects to Wayland at startup, so it failed instantly
+        # with "Unable to connect to the compositor" every single run.
+        wl_display=$(wait_for_wayland_socket) || {
+            bashio::log.error "Wayland socket never appeared after 15s -- screen timeout (swayidle) was NOT started."
+            exit 0
+        }
+        export WAYLAND_DISPLAY="$wl_display"
+        bashio::log.info "Setting screen timeout to ${SCREEN_TIMEOUT} seconds..."
+        exec swayidle -w \
+            timeout "$SCREEN_TIMEOUT" 'wlr-randr --output \* --off' \
+            resume 'wlr-randr --output \* --on'
+    ) &
 else
     bashio::log.info "Screen timeout disabled."
 fi
@@ -256,29 +293,15 @@ fi
 python3 /app/rest_server.py &
 
 # Apply output rotation once Cage's Wayland socket actually exists.
-# Polls for up to 15s instead of a fixed sleep, since a fixed sleep can miss
-# a slow compositor start (more likely on aarch64/armv7 hardware).
 if [ "$ROTATION_DEGREES" != "normal" ]; then
     (
-        elapsed=0
-        max_wait=15
-        wl_display=""
-        while [ "$elapsed" -lt "$max_wait" ]; do
-            wl_display=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -m 1 "wayland-[0-9]*$" || true)
-            if [ -n "$wl_display" ]; then
-                break
-            fi
-            sleep 0.5
-            elapsed=$((elapsed + 1))
-        done
-
-        if [ -n "$wl_display" ]; then
-            export WAYLAND_DISPLAY="$wl_display"
-            bashio::log.info "Applying rotation (${ROTATION_DEGREES}) to $ACTIVE_OUTPUT..."
-            wlr-randr --output "$ACTIVE_OUTPUT" --transform "$ROTATION_DEGREES"
-        else
-            bashio::log.error "Wayland socket never appeared after ${max_wait}s -- rotation was NOT applied."
-        fi
+        wl_display=$(wait_for_wayland_socket) || {
+            bashio::log.error "Wayland socket never appeared after 15s -- rotation was NOT applied."
+            exit 0
+        }
+        export WAYLAND_DISPLAY="$wl_display"
+        bashio::log.info "Applying rotation (${ROTATION_DEGREES}) to $ACTIVE_OUTPUT..."
+        wlr-randr --output "$ACTIVE_OUTPUT" --transform "$ROTATION_DEGREES"
     ) &
 fi
 
