@@ -1,0 +1,57 @@
+# =============================================================================
+# Example: Garage door alerts on the WD200 LED bar
+# =============================================================================
+# LED 7 (top) turns solid red while the garage door is open, escalates to
+# blinking red after 10 minutes, and clears when the door closes.
+# Replace REPLACE_WD200_DEVICE_ID and binary_sensor.garage_door.
+# =============================================================================
+
+automation:
+  - id: garage_open_led_on
+    alias: "Garage open → WD200 LED 7 red"
+    trigger:
+      - trigger: state
+        entity_id: binary_sensor.garage_door
+        to: "on"
+    action:
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 7
+          color: red
+          blink: false
+
+  - id: garage_open_too_long_escalate
+    alias: "Garage open 10 min → LED 7 blinking red + notify"
+    trigger:
+      - trigger: state
+        entity_id: binary_sensor.garage_door
+        to: "on"
+        for: "00:10:00"
+    action:
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 7
+          color: red
+          blink: true
+          blink_frequency: 3
+      - action: notify.notify
+        data:
+          title: "Garage door"
+          message: "The garage door has been open for 10 minutes."
+
+  - id: garage_closed_led_clear
+    alias: "Garage closed → LED 7 off"
+    trigger:
+      - trigger: state
+        entity_id: binary_sensor.garage_door
+        to: "off"
+    action:
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 7
+          color: "off"
+          blink: false
+          enable_status_mode: false

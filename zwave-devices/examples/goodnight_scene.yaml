@@ -1,0 +1,90 @@
+# =============================================================================
+# Example: Paddle-driven scenes (Central Scene events, no polling)
+# =============================================================================
+# Triple-tap DOWN on the bedroom WD200 → "Goodnight":
+#   lock the deadbolt, close the shades, outdoor outlets off, motion switch
+#   to vacancy (no auto-on overnight), LED bar dark.
+# Double-tap UP on the same dimmer → "Arrive/Wake":
+#   unlock, shades to glare preset, motion switch back to occupancy.
+#
+# Written as plain event automations so the whole flow lives in this file;
+# the wd200_scene_controller blueprint does the same from the UI.
+# =============================================================================
+
+script:
+  house_goodnight:
+    alias: "House: Goodnight"
+    icon: mdi:weather-night
+    sequence:
+      - action: lock.lock
+        target:
+          entity_id: lock.front_door
+      - action: script.rsz1_set_shades
+        data:
+          shades:
+            - cover.living_room_shade
+            - cover.bedroom_shade
+          position: 0
+      - action: switch.turn_off
+        target:
+          entity_id:
+            - switch.zen14_outlet_1
+            - switch.zen14_outlet_2
+      - action: script.ge_motion_set_mode
+        data:
+          target_device: ["REPLACE_GE_MOTION_DEVICE_ID"]
+          operation_mode: vacancy
+          timeout: 1_minute
+      - action: script.wd200_clear_status
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+
+  house_arrive:
+    alias: "House: Arrive / Wake"
+    icon: mdi:weather-sunset-up
+    sequence:
+      - action: lock.unlock
+        target:
+          entity_id: lock.front_door
+      - action: script.rsz1_preset
+        data:
+          shades:
+            - cover.living_room_shade
+            - cover.bedroom_shade
+          preset: glare
+      - action: script.ge_motion_set_mode
+        data:
+          target_device: ["REPLACE_GE_MOTION_DEVICE_ID"]
+          operation_mode: occupancy
+          timeout: 5_minutes
+
+automation:
+  - id: wd200_triple_tap_down_goodnight
+    alias: "WD200 3x-tap down → Goodnight"
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - trigger: event
+        event_type: zwave_js_value_notification
+        event_data:
+          device_id: REPLACE_WD200_DEVICE_ID
+          command_class: 91
+          property_key: "002"          # down paddle
+          value: KeyPressed3x
+    action:
+      - action: script.house_goodnight
+
+  - id: wd200_double_tap_up_arrive
+    alias: "WD200 2x-tap up → Arrive"
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - trigger: event
+        event_type: zwave_js_value_notification
+        event_data:
+          device_id: REPLACE_WD200_DEVICE_ID
+          command_class: 91
+          property_key: "001"          # up paddle
+          value: KeyPressed2x
+    action:
+      - action: script.house_arrive
