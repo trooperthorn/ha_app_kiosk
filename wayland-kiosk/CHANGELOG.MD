@@ -4,7 +4,33 @@
 - Locally-installed add-on can end up with a stale Supervisor
   registration/token (constant "Unable to access the API, forbidden") after
   the add-on's slug changes, until it's fully uninstalled and reinstalled.
-  Supervisor-side, not fixable from this repo.
+  Supervisor-side, not fixable from this repo. An orphaned container from a
+  previous install (e.g. one named `addon_app_kiosk` without the
+  `addon_<repohash>_` / `addon_local_` prefix Supervisor uses today) can
+  keep producing "Invalid token" errors and confuse debugging -- check
+  `docker ps -a` and `docker rm -f` any kiosk container Supervisor no
+  longer manages.
+
+## 2026.08.20.3
+- **Fix (root cause of "Found 0 GPUs" / EPERM on /dev/dri)**: the
+  `devices:` list used the legacy Docker triplet syntax on directories
+  (`/dev/dri:/dev/dri:rwm`). Modern Supervisor resolves each entry against
+  its udev hardware database and SILENTLY skips anything that isn't an
+  existing individual device node -- so the add-on ran with zero device
+  grants and every open() of /dev/dri/card0 failed with "Operation not
+  permitted" from the cgroup v2 device filter (verified in Supervisor
+  source: docker/app.py cgroups_rules -> hardware get_by_path ->
+  HardwareNotFound -> debug-level skip). Replaced with explicit per-node
+  paths (/dev/dri/card0, card1, renderD128/129, /dev/input/event0-25),
+  the same proven format the HAOS-kiosk X11 add-on uses; nonexistent
+  nodes are skipped harmlessly.
+- Removed the udev touch-calibration block from run.sh entirely. With
+  `udev: true`, Supervisor bind-mounts the HOST's /run/udev read-only, so
+  container-written udev rules are invisible to the host udevd and
+  `udevadm control` can only hang (the "Terminated timeout 5 udevadm" log
+  line). It is also unnecessary under Wayland: wlroots applies the output
+  transform to touchscreen input automatically, so `wlr-randr --transform`
+  rotates display and touch together.
 
 ## 2026.08.20.2
 - **Revert**: removed `apparmor: false` (added in 2026.08.20.1). Confirmed
