@@ -1,3 +1,4 @@
+import os
 import shlex
 import logging
 import asyncio
@@ -10,6 +11,12 @@ from aiohttp import web
 # Type alias for your payload
 Payload = Dict[str, Any]
 SHORT_TIMEOUT = 5
+
+# The output the display_on/display_off endpoints act on. wlr-randr has NO
+# wildcard support ("--output *" fails with "unknown output *" -- an earlier
+# version did exactly that, so these endpoints never worked). run.sh exports
+# the discovered connector name (e.g. "DP-1") before launching this server.
+KIOSK_OUTPUT = os.environ.get("KIOSK_OUTPUT", "")
 
 # Commands the wlr_randr / refresh / display endpoints are allowed to
 # execute. execute_command() runs via asyncio.create_subprocess_exec, which
@@ -147,8 +154,10 @@ async def handle_is_display_on(data: Payload) -> Dict[str, Any]:
 @register_function("display_on", optional=["timeout"])
 async def handle_display_on(data: Payload) -> Dict[str, Any]:
     """Turn display on, optionally set swayidle blanking timeout."""
+    if not KIOSK_OUTPUT:
+        return {"success": False, "error": "KIOSK_OUTPUT is not set -- cannot target an output."}
     blank_timeout = data.get("timeout")
-    cmds = [["wlr-randr", "--output", "*", "--on"]]
+    cmds = [["wlr-randr", "--output", KIOSK_OUTPUT, "--on"]]
     log_msg = ""
 
     if blank_timeout is None:
@@ -160,7 +169,9 @@ async def handle_display_on(data: Payload) -> Dict[str, Any]:
         t = str(blank_timeout)
         cmds += [
             ["killall", "swayidle"],
-            ["swayidle", "-w", "timeout", t, "wlr-randr --output * --off", "resume", "wlr-randr --output * --on"]
+            ["swayidle", "-w", "timeout", t,
+             f"wlr-randr --output {KIOSK_OUTPUT} --off",
+             "resume", f"wlr-randr --output {KIOSK_OUTPUT} --on"]
         ]
         log_msg = f" Screen timeout: {blank_timeout}s"
 
@@ -172,7 +183,9 @@ async def handle_display_on(data: Payload) -> Dict[str, Any]:
 @register_function("display_off")
 async def handle_display_off(data: Payload) -> Dict[str, Any]:
     """Force display off immediately using Wayland."""
-    result = await execute_command(["wlr-randr", "--output", "*", "--off"],
+    if not KIOSK_OUTPUT:
+        return {"success": False, "error": "KIOSK_OUTPUT is not set -- cannot target an output."}
+    result = await execute_command(["wlr-randr", "--output", KIOSK_OUTPUT, "--off"],
                                     timeout=SHORT_TIMEOUT, log_prefix="display_off", allow_command=True)
     return {"success": result["success"]}
 

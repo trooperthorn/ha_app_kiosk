@@ -91,7 +91,7 @@ for attempt in $(seq 1 5); do
 done
 
 if [ "$SUPERVISOR_READY" -eq 0 ]; then
-    bashio::log.error "Supervisor API did not respond after 5 attempts. ALL options will fall back to script defaults for this run -- rotation, login, dashboard, and every other setting will NOT reflect the add-on configuration screen. If this clears up after one restart, it's the known transient Supervisor-side issue (home-assistant/supervisor#1930) -- try 'ha supervisor restart', then restart this add-on. If it happens on EVERY run (not just once), it's more likely a stale add-on registration/token -- this happens after an add-on's slug changes (this add-on's slug changed from haos_wayland_kiosk to app_kiosk) and Supervisor keeps serving requests against the old registration. That case needs a full UNINSTALL + reinstall of the add-on (not just rebuild/restart) so Supervisor issues a fresh token for the current slug."
+    bashio::log.error "Supervisor API did not respond after 5 attempts. Options will fall back to script defaults for now -- but the rotation and screen-timeout tasks will keep polling and pick up the real values if the API recovers within ~60s. If the API never recovers for an entire run: one-off -> known transient Supervisor issue (home-assistant/supervisor#1930), try 'ha supervisor restart' then restart this add-on; every run -> likely a stale add-on registration/token (this add-on's slug changed from haos_wayland_kiosk to app_kiosk), which needs a full UNINSTALL + reinstall so Supervisor issues a fresh token."
 fi
 
 # ---------------------------------------------------------
@@ -196,22 +196,47 @@ fi
 # host daemon's control socket (the "Terminated timeout 5 udevadm" log
 # line). If a specific panel ever needs a hand-tuned matrix, that has to
 # happen through the compositor or on the host -- not via container udev.
-case "$ROTATION_CONFIG" in
-    "right")
-        ROTATION_DEGREES="270"
-        ;;
-    "inverted")
-        ROTATION_DEGREES="180"
-        ;;
-    "left")
-        ROTATION_DEGREES="90"
-        ;;
-    *)
-        ROTATION_DEGREES="normal"
-        ;;
-esac
+rotation_to_transform() {
+    case "$1" in
+        "right")    echo "270" ;;
+        "inverted") echo "180" ;;
+        "left")     echo "90" ;;
+        *)          echo "normal" ;;
+    esac
+}
+
+ROTATION_DEGREES=$(rotation_to_transform "$ROTATION_CONFIG")
 
 bashio::log.info "Rotation config '$ROTATION_CONFIG' -> output transform $ROTATION_DEGREES (touch follows the output transform automatically under wlroots)"
+
+# The Supervisor API has been observed rejecting this add-on's token for a
+# window around startup (403 on every bashio::config call) and then
+# accepting the very same token a little later. When that happens, the
+# option reads above all fall back to script defaults. Rather than losing
+# rotation and screen-timeout for the whole run, the background tasks below
+# re-read their option once the compositor is up, polling until the API
+# recovers (or ~60s pass). Echoes the freshest value; bashio logs its own
+# errors to stderr, so command substitution captures only the value.
+reread_option_if_api_was_down() {
+    local name="$1"
+    local current="$2"
+    local val=""
+    local i=0
+    if [ "$SUPERVISOR_READY" -eq 1 ]; then
+        echo "$current"
+        return 0
+    fi
+    while [ "$i" -lt 12 ]; do
+        val=$(bashio::config "$name" 2>/dev/null || true)
+        if [ -n "$val" ] && [ "$val" != "null" ]; then
+            echo "$val"
+            return 0
+        fi
+        sleep 5
+        i=$((i + 1))
+    done
+    echo "$current"
+}
 
 # ---------------------------------------------------------
 # BACKGROUND SERVICES
@@ -239,41 +264,60 @@ wait_for_wayland_socket() {
     return 1
 }
 
-# Screen timeout
-if [ "$SCREEN_TIMEOUT" -gt 0 ]; then
-    (
-        # Previously started immediately, before Cage's compositor existed --
-        # swayidle connects to Wayland at startup, so it failed instantly
-        # with "Unable to connect to the compositor" every single run.
-        wl_display=$(wait_for_wayland_socket) || {
-            bashio::log.error "Wayland socket never appeared after 15s -- screen timeout (swayidle) was NOT started."
-            exit 0
-        }
-        export WAYLAND_DISPLAY="$wl_display"
-        bashio::log.info "Setting screen timeout to ${SCREEN_TIMEOUT} seconds..."
+# Screen timeout. Spawned unconditionally: if the Supervisor API was down
+# at boot, SCREEN_TIMEOUT holds the fallback (600), and the subshell
+# re-reads the real value once the API recovers before deciding.
+#
+# NOTE: wlr-randr has NO wildcard support -- `--output *` fails with
+# "unknown output *" (a previous version did exactly that, so blanking
+# never worked). The real connector name must be used.
+(
+    # swayidle connects to Wayland at startup, so it must wait for Cage's
+    # socket -- started immediately it fails instantly with "Unable to
+    # connect to the compositor" (a previous version's bug).
+    wl_display=$(wait_for_wayland_socket) || {
+        bashio::log.error "Wayland socket never appeared after 15s -- screen timeout (swayidle) was NOT started."
+        exit 0
+    }
+    export WAYLAND_DISPLAY="$wl_display"
+    timeout_final=$(reread_option_if_api_was_down 'screen_timeout' "$SCREEN_TIMEOUT")
+    if [ "$timeout_final" != "$SCREEN_TIMEOUT" ]; then
+        bashio::log.info "Supervisor API recovered -- screen_timeout is ${timeout_final}s (boot-time fallback was ${SCREEN_TIMEOUT}s)."
+    fi
+    if [ "$timeout_final" -gt 0 ] 2>/dev/null; then
+        bashio::log.info "Setting screen timeout to ${timeout_final} seconds on ${ACTIVE_OUTPUT}..."
         exec swayidle -w \
-            timeout "$SCREEN_TIMEOUT" 'wlr-randr --output \* --off' \
-            resume 'wlr-randr --output \* --on'
-    ) &
-else
-    bashio::log.info "Screen timeout disabled."
-fi
+            timeout "$timeout_final" "wlr-randr --output $ACTIVE_OUTPUT --off" \
+            resume "wlr-randr --output $ACTIVE_OUTPUT --on"
+    else
+        bashio::log.info "Screen timeout disabled."
+    fi
+) &
 
-# REST API server
+# REST API server. KIOSK_OUTPUT tells it which output its display_on/off
+# commands should target (wlr-randr has no wildcard).
+export KIOSK_OUTPUT="$ACTIVE_OUTPUT"
 python3 /app/rest_server.py &
 
 # Apply output rotation once Cage's Wayland socket actually exists.
-if [ "$ROTATION_DEGREES" != "normal" ]; then
-    (
-        wl_display=$(wait_for_wayland_socket) || {
-            bashio::log.error "Wayland socket never appeared after 15s -- rotation was NOT applied."
-            exit 0
-        }
-        export WAYLAND_DISPLAY="$wl_display"
-        bashio::log.info "Applying rotation (${ROTATION_DEGREES}) to $ACTIVE_OUTPUT..."
-        wlr-randr --output "$ACTIVE_OUTPUT" --transform "$ROTATION_DEGREES"
-    ) &
-fi
+# Spawned unconditionally for the same API-recovery reason as swayidle:
+# if options fell back at boot, rotation looked like "normal" here even
+# though the user configured e.g. "right".
+(
+    wl_display=$(wait_for_wayland_socket) || {
+        bashio::log.error "Wayland socket never appeared after 15s -- rotation was NOT applied."
+        exit 0
+    }
+    export WAYLAND_DISPLAY="$wl_display"
+    rotation_final=$(reread_option_if_api_was_down 'rotate_display' "$ROTATION_CONFIG")
+    transform=$(rotation_to_transform "$rotation_final")
+    if [ "$transform" != "normal" ]; then
+        bashio::log.info "Applying rotation '${rotation_final}' (transform ${transform}) to $ACTIVE_OUTPUT..."
+        wlr-randr --output "$ACTIVE_OUTPUT" --transform "$transform"
+    else
+        bashio::log.info "Rotation '${rotation_final}' -> no output transform to apply."
+    fi
+) &
 
 # ---------------------------------------------------------
 # LOGIN HANDLING
