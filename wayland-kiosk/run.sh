@@ -179,69 +179,39 @@ else
 fi
 
 # ---------------------------------------------------------
-# ROTATION + TOUCH CALIBRATION
+# ROTATION
 # ---------------------------------------------------------
-# Matrices below are libinput's own documented reference matrices for pure
-# clockwise rotation (see libinput's "Static device configuration via udev"
-# docs). If your panel is mirrored/flipped on top of being rotated, these
-# may still need hand-tuning for your specific hardware -- but they are a
-# correct, verified starting point, unlike the previous version's untested
-# values.
+# Touch input needs NO separate calibration here. wlroots (Cage's backend)
+# maps touchscreens to the output and applies the output's transform to
+# touch coordinates, so `wlr-randr --transform` below rotates display and
+# touch together.
+#
+# A previous version tried to write a udev rule setting
+# LIBINPUT_CALIBRATION_MATRIX / WL_OUTPUT and reload udev. That mechanism
+# cannot work inside this add-on: `udev: true` bind-mounts the HOST's
+# /run/udev database read-only (Supervisor docker/const.py MOUNT_UDEV), so
+# libinput reads only the host's device properties. A rule written to the
+# container's /etc/udev/rules.d/ is invisible to the host's udevd, and
+# `udevadm control --reload-rules` in here just hangs trying to reach the
+# host daemon's control socket (the "Terminated timeout 5 udevadm" log
+# line). If a specific panel ever needs a hand-tuned matrix, that has to
+# happen through the compositor or on the host -- not via container udev.
 case "$ROTATION_CONFIG" in
     "right")
         ROTATION_DEGREES="270"
-        TOUCH_MATRIX="0 1 0 -1 0 1"
         ;;
     "inverted")
         ROTATION_DEGREES="180"
-        TOUCH_MATRIX="-1 0 1 0 -1 1"
         ;;
     "left")
         ROTATION_DEGREES="90"
-        TOUCH_MATRIX="0 -1 1 1 0 0"
         ;;
     *)
         ROTATION_DEGREES="normal"
-        TOUCH_MATRIX="1 0 0 0 1 0"
         ;;
 esac
 
-bashio::log.info "Rotation config '$ROTATION_CONFIG' -> transform $ROTATION_DEGREES, touch matrix [$TOUCH_MATRIX]"
-
-# Write a udev rule mapping the touch device to the active output and
-# applying the calibration matrix. This is the mechanism libinput and
-# wlroots actually read -- LIBINPUT_CALIBRATION_MATRIX and WL_OUTPUT are
-# udev device properties, NOT shell/process environment variables. Setting
-# them with `export` (as a previous version of this script did) has no
-# effect at all; libinput only sees them if they're attached to the device
-# via udev before the device is enumerated.
-UDEV_RULE_FILE="/etc/udev/rules.d/99-touch-kiosk.rules"
-bashio::log.info "Writing touch calibration udev rule to $UDEV_RULE_FILE ..."
-# This write succeeds fine under the default (confined) AppArmor profile --
-# do NOT disable AppArmor to "fix" this, it breaks /dev/dri cgroup access
-# instead (see config.yaml). Guarded anyway: under bashio's errexit an
-# unguarded failure here would take down the entire script (and with it
-# Cage/Chromium) before the kiosk ever started, so a permission failure
-# only costs touch calibration, never the display itself.
-if cat > "$UDEV_RULE_FILE" <<EOF
-ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="${TOUCH_DEVICE}", ENV{WL_OUTPUT}="${ACTIVE_OUTPUT}", ENV{LIBINPUT_CALIBRATION_MATRIX}="${TOUCH_MATRIX}"
-EOF
-then
-    if command -v udevadm >/dev/null 2>&1; then
-        # Bounded with `timeout`: udevadm blocks waiting for a reply from
-        # udevd over its control socket, and in some container/host
-        # combinations nothing ever answers. Without a bound this has been
-        # observed adding ~60s to every boot before falling through via
-        # `|| true` -- worth avoiding even though it isn't fatal.
-        timeout 5 udevadm control --reload-rules 2>/dev/null || true
-        timeout 5 udevadm trigger --subsystem-match=input 2>/dev/null || true
-        bashio::log.info "udev rules reloaded and triggered for input subsystem."
-    else
-        bashio::log.warning "udevadm not found -- touch calibration rule was written but not applied. It will only take effect on next device (re)enumeration."
-    fi
-else
-    bashio::log.error "Permission denied writing $UDEV_RULE_FILE -- touch rotation calibration will be skipped. The kiosk display will still start."
-fi
+bashio::log.info "Rotation config '$ROTATION_CONFIG' -> output transform $ROTATION_DEGREES (touch follows the output transform automatically under wlroots)"
 
 # ---------------------------------------------------------
 # BACKGROUND SERVICES

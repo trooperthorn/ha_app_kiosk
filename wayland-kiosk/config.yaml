@@ -1,6 +1,6 @@
 name: "HAOS Wayland Kiosk"
 description: "Wayland-native kiosk dashboard using Cage and Chromium"
-version: "2026.08.20.2"
+version: "2026.08.20.3"
 slug: "app_kiosk"
 init: false
 startup: application
@@ -23,22 +23,55 @@ arch:
 # full_access: true (previous config) granted access to every device on the
 # host, which is far more than this add-on needs. Only /dev/dri (GPU/DRM)
 # and /dev/input (touch/keyboard) are actually required.
+#
+# FORMAT MATTERS: each entry must be a single, individual device-node path.
+# Supervisor looks every entry up in its udev hardware database and grants
+# access via a cgroup device rule (docker/app.py cgroups_rules); anything it
+# can't find there -- a directory like /dev/dri, or the old Docker-style
+# "/dev/dri:/dev/dri:rwm" triplet this file used to contain -- is SILENTLY
+# skipped (debug-level log only). The add-on then starts with zero device
+# grants: the nodes are still visible in /dev, but open() fails with EPERM
+# ("Operation not permitted") from the cgroup v2 device filter, and Cage
+# dies with "Found 0 GPUs". Nodes listed here that don't exist on a given
+# host are skipped harmlessly, so over-listing is safe.
 udev: true
 audio: true
 devices:
-  - /dev/dri:/dev/dri:rwm
-  - /dev/input:/dev/input:rwm
+  - /dev/dri/card0
+  - /dev/dri/card1
+  - /dev/dri/renderD128
+  - /dev/dri/renderD129
+  - /dev/input/event0
+  - /dev/input/event1
+  - /dev/input/event2
+  - /dev/input/event3
+  - /dev/input/event4
+  - /dev/input/event5
+  - /dev/input/event6
+  - /dev/input/event7
+  - /dev/input/event8
+  - /dev/input/event9
+  - /dev/input/event10
+  - /dev/input/event11
+  - /dev/input/event12
+  - /dev/input/event13
+  - /dev/input/event14
+  - /dev/input/event15
+  - /dev/input/event16
+  - /dev/input/event17
+  - /dev/input/event18
+  - /dev/input/event19
+  - /dev/input/event20
+  - /dev/input/event21
+  - /dev/input/event22
+  - /dev/input/event23
+  - /dev/input/event24
+  - /dev/input/event25
 
-# NOTE: do NOT set `apparmor: false` here. It was tried as a fix for a
-# suspected udev-write permission issue and made things worse: Supervisor
-# applies the device cgroup rules for the `devices:` list above together
-# with the AppArmor profile, so disabling AppArmor broke access to
-# /dev/dri entirely (wlroots: "Failed to open device: '/dev/dri/card0':
-# Operation not permitted", 0 GPUs found, cage exits, container dies).
-# The default (confined) profile is required for the explicit device
-# passthrough above to actually work. run.sh's udev-rule write for touch
-# calibration is guarded to fail soft under confinement (see run.sh) so it
-# no longer needs apparmor disabled to avoid crashing the add-on.
+# NOTE: do NOT set `apparmor: false` here. It was once tried as a fix for
+# the /dev/dri "Operation not permitted" crash and did nothing (the real
+# cause was the malformed `devices:` entries described above); it only
+# strips the add-on's security confinement for no benefit.
 
 # --- Storage and Limits ---
 map:
