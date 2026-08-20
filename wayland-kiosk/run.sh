@@ -217,16 +217,25 @@ bashio::log.info "Rotation config '$ROTATION_CONFIG' -> transform $ROTATION_DEGR
 # via udev before the device is enumerated.
 UDEV_RULE_FILE="/etc/udev/rules.d/99-touch-kiosk.rules"
 bashio::log.info "Writing touch calibration udev rule to $UDEV_RULE_FILE ..."
-cat > "$UDEV_RULE_FILE" <<EOF
+# This write requires apparmor: false in config.yaml -- the Supervisor's
+# default confinement profile denies writes under /etc/udev/rules.d/, and
+# under bashio's errexit an unguarded failure here used to take down the
+# entire script (and with it Cage/Chromium) before the kiosk ever started.
+# Guard it explicitly so a permission failure only costs touch calibration,
+# never the display itself.
+if cat > "$UDEV_RULE_FILE" <<EOF
 ACTION=="add|change", KERNEL=="event*", ATTRS{name}=="${TOUCH_DEVICE}", ENV{WL_OUTPUT}="${ACTIVE_OUTPUT}", ENV{LIBINPUT_CALIBRATION_MATRIX}="${TOUCH_MATRIX}"
 EOF
-
-if command -v udevadm >/dev/null 2>&1; then
-    udevadm control --reload-rules 2>/dev/null || true
-    udevadm trigger --subsystem-match=input 2>/dev/null || true
-    bashio::log.info "udev rules reloaded and triggered for input subsystem."
+then
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm control --reload-rules 2>/dev/null || true
+        udevadm trigger --subsystem-match=input 2>/dev/null || true
+        bashio::log.info "udev rules reloaded and triggered for input subsystem."
+    else
+        bashio::log.warning "udevadm not found -- touch calibration rule was written but not applied. It will only take effect on next device (re)enumeration."
+    fi
 else
-    bashio::log.warning "udevadm not found -- touch calibration rule was written but not applied. It will only take effect on next device (re)enumeration."
+    bashio::log.error "Permission denied writing $UDEV_RULE_FILE -- touch rotation calibration will be skipped. Check that apparmor: false is set in config.yaml. The kiosk display will still start."
 fi
 
 # ---------------------------------------------------------
