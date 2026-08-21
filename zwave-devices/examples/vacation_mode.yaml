@@ -1,0 +1,64 @@
+# =============================================================================
+# Example: Vacation posture (one script in, one script out)
+# =============================================================================
+# Enter: keypad PINs disabled + auto-lock on (BE469), motion switch in
+# occupancy mode for a lived-in look, shades to privacy, lamp plug cycles
+# nightly via its own firmware timers (works even if HA goes down).
+# Leave: everything back to normal.
+# =============================================================================
+
+script:
+  house_vacation_on:
+    alias: "House: Vacation mode ON"
+    icon: mdi:beach
+    sequence:
+      - action: script.be469_set_options
+        data:
+          target_device: ["REPLACE_LOCK_DEVICE_ID"]
+          vacation_mode: true
+          auto_lock: true
+      - action: script.ge_motion_set_mode
+        data:
+          target_device: ["REPLACE_GE_MOTION_DEVICE_ID"]
+          operation_mode: occupancy
+          timeout: 15_minutes
+      - action: script.rsz1_preset
+        data:
+          shades:
+            - cover.living_room_shade
+            - cover.bedroom_shade
+          preset: privacy
+      # Lamp on the Minoston plug: on now, firmware cycles it 4h off / 20h on
+      - action: switch.turn_on
+        target:
+          entity_id: switch.living_room_lamp
+      - action: script.minoston_set_auto_timers
+        data:
+          target_device: ["REPLACE_MINOSTON_DEVICE_ID"]
+          auto_off_minutes: 240
+          auto_on_minutes: 1200
+
+  house_vacation_off:
+    alias: "House: Vacation mode OFF"
+    icon: mdi:home-account
+    sequence:
+      - action: script.be469_set_options
+        data:
+          target_device: ["REPLACE_LOCK_DEVICE_ID"]
+          vacation_mode: false
+      - action: script.ge_motion_set_mode
+        data:
+          target_device: ["REPLACE_GE_MOTION_DEVICE_ID"]
+          operation_mode: occupancy
+          timeout: 5_minutes
+      - action: script.rsz1_preset
+        data:
+          shades:
+            - cover.living_room_shade
+            - cover.bedroom_shade
+          preset: open
+      - action: script.minoston_set_auto_timers
+        data:
+          target_device: ["REPLACE_MINOSTON_DEVICE_ID"]
+          auto_off_minutes: 0
+          auto_on_minutes: 0

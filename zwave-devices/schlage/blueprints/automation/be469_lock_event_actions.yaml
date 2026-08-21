@@ -1,0 +1,116 @@
+blueprint:
+  name: Schlage BE469ZP Lock Event Actions
+  description: >-
+    Run actions on push notifications from a Z-Wave lock (Schlage BE469ZP or
+    any Notification CC lock): keypad lock/unlock (optionally filtered to
+    specific code slots), manual and Z-Wave lock/unlock, auto-lock, lock
+    jammed, and tamper/built-in alarm. Events arrive via the Lifeline
+    association — no polling, typically sub-second.
+  domain: automation
+  author: TrooperThorn
+  input:
+    lock_device:
+      name: Lock
+      selector:
+        device:
+          filter:
+            - integration: zwave_js
+              manufacturer: Allegion
+            - integration: zwave_js
+              manufacturer: Schlage
+    user_slots:
+      name: Code slots filter (keypad events)
+      description: >-
+        Comma-separated slot numbers (e.g. "1,3"). Leave empty to match any
+        slot. Only applies to the keypad lock/unlock actions.
+      default: ""
+      selector:
+        text: {}
+    keypad_unlock:
+      name: Keypad unlock
+      default: []
+      selector:
+        action: {}
+    keypad_lock:
+      name: Keypad lock
+      default: []
+      selector:
+        action: {}
+    manual_lock:
+      name: Manual (thumbturn) lock
+      default: []
+      selector:
+        action: {}
+    manual_unlock:
+      name: Manual (thumbturn) unlock
+      default: []
+      selector:
+        action: {}
+    rf_lock:
+      name: Z-Wave (remote) lock
+      default: []
+      selector:
+        action: {}
+    rf_unlock:
+      name: Z-Wave (remote) unlock
+      default: []
+      selector:
+        action: {}
+    auto_lock:
+      name: Auto-lock completed
+      default: []
+      selector:
+        action: {}
+    lock_jammed:
+      name: Lock jammed
+      default: []
+      selector:
+        action: {}
+    alarm_triggered:
+      name: Tamper / built-in alarm
+      default: []
+      selector:
+        action: {}
+
+mode: parallel
+max: 10
+max_exceeded: silent
+
+trigger:
+  - platform: event
+    event_type: zwave_js_notification
+    event_data:
+      device_id: !input lock_device
+      command_class: 113
+
+variables:
+  user_slots_input: !input user_slots
+  slot_list: >-
+    {{ user_slots_input.split(',') | map('trim') | select('ne', '') | map('int') | list }}
+  notif_type: "{{ trigger.event.data.type | default(0) }}"
+  notif_event: "{{ trigger.event.data.event | default(0) }}"
+  event_slot: "{{ (trigger.event.data.parameters | default({})).get('userId', 0) }}"
+  slot_ok: "{{ slot_list | length == 0 or event_slot | int in slot_list }}"
+
+action:
+  - choose:
+      # Access Control (type 6): 1/2 manual, 3/4 RF, 5/6 keypad, 9 auto, 11 jammed
+      - conditions: "{{ notif_type == 6 and notif_event == 6 and slot_ok }}"
+        sequence: !input keypad_unlock
+      - conditions: "{{ notif_type == 6 and notif_event == 5 and slot_ok }}"
+        sequence: !input keypad_lock
+      - conditions: "{{ notif_type == 6 and notif_event == 1 }}"
+        sequence: !input manual_lock
+      - conditions: "{{ notif_type == 6 and notif_event == 2 }}"
+        sequence: !input manual_unlock
+      - conditions: "{{ notif_type == 6 and notif_event == 3 }}"
+        sequence: !input rf_lock
+      - conditions: "{{ notif_type == 6 and notif_event == 4 }}"
+        sequence: !input rf_unlock
+      - conditions: "{{ notif_type == 6 and notif_event == 9 }}"
+        sequence: !input auto_lock
+      - conditions: "{{ notif_type == 6 and notif_event == 11 }}"
+        sequence: !input lock_jammed
+      # Home Security (type 7): tamper / intrusion from the built-in alarm
+      - conditions: "{{ notif_type == 7 }}"
+        sequence: !input alarm_triggered

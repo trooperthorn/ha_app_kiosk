@@ -1,0 +1,392 @@
+# =============================================================================
+# HomeSeer HS-WD200+ support package for Home Assistant (zwave_js)
+# =============================================================================
+# Drop-in package that adds LED / status-mode / scene tooling for HomeSeer
+# HS-WD200+ dimmers WITHOUT modifying the zwave_js integration. Everything is
+# built on the public zwave_js services (set_config_parameter) and events
+# (zwave_js_value_notification).
+#
+# Install: copy this file to /config/packages/ and add to configuration.yaml:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# Device parameter reference (HS-WD200+):
+#   13      Status Mode           0 = Load Status (normal), 1 = Custom Status
+#   14      Load Status LED color 0=White 1=Red 2=Green 3=Blue 4=Magenta
+#                                 5=Yellow 6=Cyan
+#   21..27  Status LED 1..7 color (LED 1 = bottom, LED 7 = top)
+#                                 0=Off 1=Red 2=Green 3=Blue 4=Magenta
+#                                 5=Yellow 6=Cyan 7=White
+#   30      Blink frequency       0 = no blink, 1..255 = n x 100 ms on/off
+#   31      Blink bitmask         bit 0 = LED 1 ... bit 6 = LED 7
+#   11/12   Remote / local ramp rate (responsiveness tuning)
+# =============================================================================
+
+script:
+  # ---------------------------------------------------------------------------
+  # Set one status-mode LED: color + optional blink, on one or more dimmers.
+  # ---------------------------------------------------------------------------
+  wd200_set_status_led:
+    alias: "WD200: Set status LED"
+    description: >-
+      Sets the color (and optionally blink) of a single status-mode LED
+      (1 = bottom, 7 = top) on one or more HomeSeer HS-WD200+ dimmers.
+      Optionally switches the dimmer into Custom Status mode so the LED
+      is actually visible.
+    icon: mdi:led-on
+    mode: parallel
+    max: 20
+    fields:
+      target_device:
+        name: Dimmer(s)
+        description: HomeSeer WD200+ device(s) to control
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: HomeSeer Technologies
+      led:
+        name: LED number
+        description: 1 = bottom LED, 7 = top LED
+        required: true
+        default: 1
+        selector:
+          number:
+            min: 1
+            max: 7
+            mode: box
+      color:
+        name: Color
+        required: true
+        default: "off"
+        selector:
+          select:
+            options: ["off", "red", "green", "blue", "magenta", "yellow", "cyan", "white"]
+      blink:
+        name: Blink
+        description: Blink this LED (blink frequency is set device-wide)
+        default: false
+        selector:
+          boolean:
+      blink_frequency:
+        name: Blink frequency
+        description: On/off period in 100 ms steps (5 = 500 ms). Applies to all blinking LEDs on the device.
+        default: 5
+        selector:
+          number:
+            min: 1
+            max: 255
+            mode: box
+      enable_status_mode:
+        name: Switch to Custom Status mode
+        description: Also set parameter 13 = 1 so status LEDs are shown instead of load level
+        default: true
+        selector:
+          boolean:
+    sequence:
+      - variables:
+          status_color_codes:
+            "off": 0
+            red: 1
+            green: 2
+            blue: 3
+            magenta: 4
+            yellow: 5
+            cyan: 6
+            white: 7
+          led_num: "{{ led | int }}"
+          led_bit: "{{ 2 ** (led | int - 1) }}"
+      - if: "{{ enable_status_mode | default(true) }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: 13
+              value: 1
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: "{{ 20 + led_num }}"
+          value: "{{ status_color_codes[color | lower | trim] }}"
+      - if: "{{ blink | default(false) }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: 30
+              value: "{{ blink_frequency | default(5) | int }}"
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: 31
+              bitmask: "{{ led_bit }}"
+              value: 1
+        else:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: 31
+              bitmask: "{{ led_bit }}"
+              value: 0
+
+  # ---------------------------------------------------------------------------
+  # Set all seven status LEDs to one color in a single call.
+  # ---------------------------------------------------------------------------
+  wd200_set_all_status_leds:
+    alias: "WD200: Set all status LEDs"
+    description: >-
+      Sets all 7 status-mode LEDs to the same color (and optional blink) on
+      one or more HS-WD200+ dimmers. Use color "off" to blank the bar.
+    icon: mdi:led-strip
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Dimmer(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: HomeSeer Technologies
+      color:
+        name: Color
+        required: true
+        default: "off"
+        selector:
+          select:
+            options: ["off", "red", "green", "blue", "magenta", "yellow", "cyan", "white"]
+      blink:
+        name: Blink
+        default: false
+        selector:
+          boolean:
+      blink_frequency:
+        name: Blink frequency
+        description: On/off period in 100 ms steps
+        default: 5
+        selector:
+          number:
+            min: 1
+            max: 255
+            mode: box
+      enable_status_mode:
+        name: Switch to Custom Status mode
+        default: true
+        selector:
+          boolean:
+    sequence:
+      - repeat:
+          count: 7
+          sequence:
+            - action: script.wd200_set_status_led
+              data:
+                target_device: "{{ target_device }}"
+                led: "{{ repeat.index }}"
+                color: "{{ color }}"
+                blink: "{{ blink | default(false) }}"
+                blink_frequency: "{{ blink_frequency | default(5) }}"
+                enable_status_mode: "{{ enable_status_mode | default(true) and repeat.index == 1 }}"
+
+  # ---------------------------------------------------------------------------
+  # Paint the whole LED bar from a 7-entry list (one call per gauge update).
+  # ---------------------------------------------------------------------------
+  wd200_set_led_pattern:
+    alias: "WD200: Set LED pattern"
+    description: >-
+      Sets each of the 7 status LEDs from a list of colors, bottom (index 0)
+      to top (index 6). Shorter lists leave the remaining LEDs untouched.
+      Example pattern: ["green", "green", "yellow", "off", "off", "off", "red"]
+    icon: mdi:format-color-fill
+    mode: queued
+    max: 10
+    fields:
+      target_device:
+        name: Dimmer(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: HomeSeer Technologies
+      pattern:
+        name: Color pattern
+        description: 'List of up to 7 colors, bottom first, e.g. ["red", "off", "white"]'
+        required: true
+        selector:
+          object:
+      enable_status_mode:
+        name: Switch to Custom Status mode
+        default: true
+        selector:
+          boolean:
+    sequence:
+      - repeat:
+          for_each: "{{ pattern }}"
+          sequence:
+            - action: script.wd200_set_status_led
+              data:
+                target_device: "{{ target_device }}"
+                led: "{{ repeat.index }}"
+                color: "{{ repeat.item }}"
+                blink: false
+                enable_status_mode: "{{ enable_status_mode | default(true) and repeat.index == 1 }}"
+
+  # ---------------------------------------------------------------------------
+  # Return the dimmer to normal (load status) mode and clear custom LEDs.
+  # ---------------------------------------------------------------------------
+  wd200_clear_status:
+    alias: "WD200: Clear status / back to load mode"
+    description: >-
+      Turns off all custom status LEDs and blinking, and returns the dimmer
+      to normal Load Status mode (LED bar shows dim level again).
+    icon: mdi:led-off
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Dimmer(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: HomeSeer Technologies
+    sequence:
+      - repeat:
+          count: 7
+          sequence:
+            - action: zwave_js.set_config_parameter
+              target:
+                device_id: "{{ target_device }}"
+              data:
+                parameter: "{{ 20 + repeat.index }}"
+                value: 0
+            - action: zwave_js.set_config_parameter
+              target:
+                device_id: "{{ target_device }}"
+              data:
+                parameter: 31
+                bitmask: "{{ 2 ** (repeat.index - 1) }}"
+                value: 0
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 30
+          value: 0
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 13
+          value: 0
+
+  # ---------------------------------------------------------------------------
+  # Normal-mode (load status) LED color, parameter 14.
+  # NOTE: different value map than status LEDs — no "off", White = 0.
+  # ---------------------------------------------------------------------------
+  wd200_set_normal_led_color:
+    alias: "WD200: Set normal-mode LED color"
+    description: >-
+      Sets the LED bar color used in normal Load Status mode (parameter 14).
+    icon: mdi:palette
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Dimmer(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: HomeSeer Technologies
+      color:
+        name: Color
+        required: true
+        default: white
+        selector:
+          select:
+            options: ["white", "red", "green", "blue", "magenta", "yellow", "cyan"]
+    sequence:
+      - variables:
+          normal_color_codes:
+            white: 0
+            red: 1
+            green: 2
+            blue: 3
+            magenta: 4
+            yellow: 5
+            cyan: 6
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 14
+          value: "{{ normal_color_codes[color | lower | trim] }}"
+
+  # ---------------------------------------------------------------------------
+  # Ramp-rate tuning (parameters 11 remote / 12 local) for responsiveness.
+  # ---------------------------------------------------------------------------
+  wd200_set_ramp_rates:
+    alias: "WD200: Set ramp rates"
+    description: >-
+      Tunes dimming responsiveness. Lower = faster. 0 = instant on/off,
+      which also makes the post-dim Z-Wave level report arrive sooner.
+    icon: mdi:speedometer
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Dimmer(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: HomeSeer Technologies
+      remote_ramp_rate:
+        name: Remote ramp rate
+        description: Seconds-per-step style rate for Z-Wave commands (0-90, default 3)
+        default: 3
+        selector:
+          number:
+            min: 0
+            max: 90
+            mode: box
+      local_ramp_rate:
+        name: Local ramp rate
+        description: Rate for physical paddle presses (0-90, default 3)
+        default: 3
+        selector:
+          number:
+            min: 0
+            max: 90
+            mode: box
+    sequence:
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 11
+          value: "{{ remote_ramp_rate | int }}"
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 12
+          value: "{{ local_ramp_rate | int }}"

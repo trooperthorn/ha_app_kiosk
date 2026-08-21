@@ -1,0 +1,206 @@
+# =============================================================================
+# Schlage BE469ZP (Connect touchscreen deadbolt) support package — zwave_js
+# =============================================================================
+# Built entirely on public zwave_js services; no integration changes needed.
+#
+# Parameter reference (BE469ZP):
+#   3   Beeper                     0 = Disable, 255 = Enable
+#   4   Vacation Mode              0 = Disable, 255 = Enable (keypad PINs ignored)
+#   5   Lock & Leave               0 = Disable, 255 = Enable (press Schlage to lock)
+#   7   Alarm Mode                 0 = Off, 1 = Alert, 2 = Tamper, 3 = Forced Entry
+#   8   Alarm Alert sensitivity    1..5 (1 = most sensitive)
+#   9   Alarm Tamper sensitivity   1..5
+#   10  Alarm Kick/Forced sens.    1..5
+#   15  Auto Lock (30 s)           0 = Disable, 255 = Enable
+#   16  User code PIN length       4..8 (changing it wipes existing codes!)
+#
+# User codes are managed via the dedicated zwave_js lock services, not
+# config parameters.
+# =============================================================================
+
+script:
+  be469_set_user_code:
+    alias: "BE469: Set user code"
+    description: Programs a PIN into a code slot on one or more Z-Wave locks.
+    icon: mdi:dialpad
+    mode: queued
+    max: 10
+    fields:
+      lock_entity:
+        name: Lock(s)
+        required: true
+        selector:
+          entity:
+            multiple: true
+            filter:
+              - domain: lock
+                integration: zwave_js
+      code_slot:
+        name: Code slot
+        description: BE469ZP supports slots 1-30
+        required: true
+        selector:
+          number:
+            min: 1
+            max: 30
+            mode: box
+      usercode:
+        name: PIN code
+        description: Must match the lock's configured PIN length (default 4 digits)
+        required: true
+        selector:
+          text:
+    sequence:
+      - action: zwave_js.set_lock_usercode
+        target:
+          entity_id: "{{ lock_entity }}"
+        data:
+          code_slot: "{{ code_slot | int }}"
+          usercode: "{{ usercode }}"
+
+  be469_clear_user_code:
+    alias: "BE469: Clear user code"
+    description: Removes the PIN from a code slot.
+    icon: mdi:dialpad
+    mode: queued
+    max: 10
+    fields:
+      lock_entity:
+        name: Lock(s)
+        required: true
+        selector:
+          entity:
+            multiple: true
+            filter:
+              - domain: lock
+                integration: zwave_js
+      code_slot:
+        name: Code slot
+        required: true
+        selector:
+          number:
+            min: 1
+            max: 30
+            mode: box
+    sequence:
+      - action: zwave_js.clear_lock_usercode
+        target:
+          entity_id: "{{ lock_entity }}"
+        data:
+          code_slot: "{{ code_slot | int }}"
+
+  be469_set_alarm_mode:
+    alias: "BE469: Set built-in alarm mode"
+    description: >-
+      Configures the lock's built-in alarm (parameter 7) and the sensitivity
+      of the selected mode (parameters 8/9/10). 1 = most sensitive,
+      5 = least sensitive.
+    icon: mdi:bell-alert
+    mode: queued
+    max: 5
+    fields:
+      target_device:
+        name: Lock device(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: Allegion
+              - integration: zwave_js
+                manufacturer: Schlage
+      alarm_mode:
+        name: Alarm mode
+        required: true
+        default: "off"
+        selector:
+          select:
+            options: ["off", "alert", "tamper", "forced_entry"]
+      sensitivity:
+        name: Sensitivity
+        description: Applied to the chosen mode's sensitivity parameter (ignored for "off")
+        default: 3
+        selector:
+          number:
+            min: 1
+            max: 5
+            mode: box
+    sequence:
+      - variables:
+          mode_codes:
+            "off": 0
+            alert: 1
+            tamper: 2
+            forced_entry: 3
+          sens_param:
+            alert: 8
+            tamper: 9
+            forced_entry: 10
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 7
+          value: "{{ mode_codes[alarm_mode] }}"
+      - if: "{{ alarm_mode != 'off' }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: "{{ sens_param[alarm_mode] }}"
+              value: "{{ sensitivity | default(3) | int }}"
+
+  be469_set_options:
+    alias: "BE469: Set lock options"
+    description: >-
+      Sets beeper, vacation mode, lock & leave and 30-second auto-lock
+      (parameters 3, 4, 5, 15). Leave a field empty to skip it.
+    icon: mdi:lock-smart
+    mode: queued
+    max: 5
+    fields:
+      target_device:
+        name: Lock device(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: Allegion
+              - integration: zwave_js
+                manufacturer: Schlage
+      beeper:
+        name: Keypad beeper
+        selector:
+          boolean:
+      vacation_mode:
+        name: Vacation mode (keypad PINs disabled)
+        selector:
+          boolean:
+      lock_and_leave:
+        name: Lock & Leave (one-touch locking)
+        selector:
+          boolean:
+      auto_lock:
+        name: Auto-lock after 30 seconds
+        selector:
+          boolean:
+    sequence:
+      - variables:
+          opts:
+            - { param: 3, val: "{{ beeper | default(none) }}" }
+            - { param: 4, val: "{{ vacation_mode | default(none) }}" }
+            - { param: 5, val: "{{ lock_and_leave | default(none) }}" }
+            - { param: 15, val: "{{ auto_lock | default(none) }}" }
+      - repeat:
+          for_each: "{{ opts | selectattr('val', 'in', [true, false, 'true', 'false']) | list }}"
+          sequence:
+            - action: zwave_js.set_config_parameter
+              target:
+                device_id: "{{ target_device }}"
+              data:
+                parameter: "{{ repeat.item.param }}"
+                value: "{{ 255 if repeat.item.val in [true, 'true'] else 0 }}"

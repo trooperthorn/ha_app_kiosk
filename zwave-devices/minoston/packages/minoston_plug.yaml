@@ -1,0 +1,105 @@
+# =============================================================================
+# Minoston MP21Z / MP31Z mini smart plug support package — zwave_js
+# =============================================================================
+# Applies to the 500/700/800-series Minoston mini plugs (MP21Z, MP31Z and
+# the metering/dimmer variants share the same core parameter map).
+#
+# Parameter reference:
+#   1  LED indicator        0 = LED on when plug on (default),
+#                           1 = LED on when plug off, 2 = LED disabled
+#   2  Auto turn-OFF timer  minutes, 0 = disabled (turns plug off n minutes
+#                           after it was turned on)
+#   3  Auto turn-ON timer   minutes, 0 = disabled
+#   4  Power failure recovery — value map varies by firmware series; check
+#      the device's configuration page in Z-Wave JS before scripting it.
+# =============================================================================
+
+script:
+  minoston_set_led_mode:
+    alias: "Minoston plug: Set LED indicator mode"
+    icon: mdi:led-outline
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Plug(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: Minoston
+              - integration: zwave_js
+                manufacturer: New One
+      led_mode:
+        name: LED mode
+        required: true
+        default: on_when_on
+        selector:
+          select:
+            options: ["on_when_on", "on_when_off", "disabled"]
+    sequence:
+      - variables:
+          led_codes:
+            on_when_on: 0
+            on_when_off: 1
+            disabled: 2
+      - action: zwave_js.set_config_parameter
+        target:
+          device_id: "{{ target_device }}"
+        data:
+          parameter: 1
+          value: "{{ led_codes[led_mode] }}"
+
+  minoston_set_auto_timers:
+    alias: "Minoston plug: Set auto on/off timers"
+    description: >-
+      Sets the auto turn-off (parameter 2) and/or auto turn-on (parameter 3)
+      timers in minutes. 0 disables a timer. Leave a field empty to skip it.
+    icon: mdi:timer-outline
+    mode: parallel
+    max: 10
+    fields:
+      target_device:
+        name: Plug(s)
+        required: true
+        selector:
+          device:
+            multiple: true
+            filter:
+              - integration: zwave_js
+                manufacturer: Minoston
+              - integration: zwave_js
+                manufacturer: New One
+      auto_off_minutes:
+        name: Auto turn-OFF after (minutes)
+        selector:
+          number:
+            min: 0
+            max: 65535
+            mode: box
+      auto_on_minutes:
+        name: Auto turn-ON after (minutes)
+        selector:
+          number:
+            min: 0
+            max: 65535
+            mode: box
+    sequence:
+      - if: "{{ auto_off_minutes is defined and auto_off_minutes is not none }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: 2
+              value: "{{ auto_off_minutes | int }}"
+      - if: "{{ auto_on_minutes is defined and auto_on_minutes is not none }}"
+        then:
+          - action: zwave_js.set_config_parameter
+            target:
+              device_id: "{{ target_device }}"
+            data:
+              parameter: 3
+              value: "{{ auto_on_minutes | int }}"

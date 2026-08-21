@@ -1,0 +1,88 @@
+# =============================================================================
+# Example: Severe weather + freeze protection
+# =============================================================================
+# Tiered weather display on LED 6:
+#   - Advisory/Watch  → solid yellow on the main dimmer
+#   - Warning         → blinking magenta on ALL listed dimmers (can't-miss)
+#   - Cleared         → LED 6 off
+# Freeze protection: below 32°F/0°C turn on ZEN14 outlet 2 (heat tape) and
+# light LED 1 blue; both revert above 36°F.
+#
+# Replace sensor.nws_alerts with your alert sensor. The example matches on
+# the alert title text — adjust the substrings to your sensor's format.
+# =============================================================================
+
+automation:
+  - id: weather_alert_tiered_led
+    alias: "Weather alert → tiered WD200 display"
+    trigger:
+      - trigger: state
+        entity_id: sensor.nws_alerts
+    action:
+      - variables:
+          alert_text: "{{ (trigger.to_state.attributes.get('display_desc') or trigger.to_state.state or '') | lower }}"
+          all_dimmers: ["REPLACE_WD200_DEVICE_ID"]   # add every WD200 here
+      - choose:
+          - conditions: "{{ 'warning' in alert_text }}"
+            sequence:
+              - action: script.wd200_set_status_led
+                data:
+                  target_device: "{{ all_dimmers }}"
+                  led: 6
+                  color: magenta
+                  blink: true
+                  blink_frequency: 3
+          - conditions: "{{ 'watch' in alert_text or 'advisory' in alert_text }}"
+            sequence:
+              - action: script.wd200_set_status_led
+                data:
+                  target_device: "{{ all_dimmers }}"
+                  led: 6
+                  color: yellow
+                  blink: false
+        default:
+          # No active alert → clear the weather LED
+          - action: script.wd200_set_status_led
+            data:
+              target_device: "{{ all_dimmers }}"
+              led: 6
+              color: "off"
+              blink: false
+              enable_status_mode: false
+
+  - id: freeze_protection_on
+    alias: "Freeze protection on"
+    trigger:
+      - trigger: numeric_state
+        entity_id: sensor.outdoor_temperature
+        below: 32
+        for: "00:15:00"
+    action:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.zen14_outlet_2   # heat tape / pipe heater
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 1
+          color: blue
+          blink: false
+
+  - id: freeze_protection_off
+    alias: "Freeze protection off"
+    trigger:
+      - trigger: numeric_state
+        entity_id: sensor.outdoor_temperature
+        above: 36
+        for: "00:30:00"
+    action:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.zen14_outlet_2
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 1
+          color: "off"
+          blink: false
+          enable_status_mode: false

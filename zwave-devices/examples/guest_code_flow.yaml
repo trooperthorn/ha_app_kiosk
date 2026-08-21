@@ -1,0 +1,122 @@
+# =============================================================================
+# Example: Guest access flow (BE469ZP + WD200)
+# =============================================================================
+# 5x-tap UP on the hallway WD200 → enable guest mode:
+#   programs the guest PIN into slot 5 and lights LED 4 green.
+# 5x-tap DOWN → disable guest mode:
+#   clears slot 5 and turns LED 4 off.
+# Any keypad unlock using slot 5 → notification with a green LED flash.
+#
+# Set the PIN in the input_text below (or hardcode it), replace the
+# placeholder device/entity IDs.
+# =============================================================================
+
+input_text:
+  guest_door_pin:
+    name: Guest door PIN
+    min: 4
+    max: 8
+    pattern: "[0-9]*"
+    initial: "2468"
+
+input_boolean:
+  guest_mode:
+    name: Guest mode
+    icon: mdi:account-key
+
+script:
+  guest_mode_enable:
+    alias: "Guest mode: Enable"
+    icon: mdi:account-key
+    sequence:
+      - action: script.be469_set_user_code
+        data:
+          lock_entity: ["lock.front_door"]
+          code_slot: 5
+          usercode: "{{ states('input_text.guest_door_pin') }}"
+      - action: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.guest_mode
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 4
+          color: green
+          blink: false
+
+  guest_mode_disable:
+    alias: "Guest mode: Disable"
+    icon: mdi:account-off
+    sequence:
+      - action: script.be469_clear_user_code
+        data:
+          lock_entity: ["lock.front_door"]
+          code_slot: 5
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.guest_mode
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 4
+          color: "off"
+          blink: false
+          enable_status_mode: false
+
+automation:
+  - id: wd200_5x_up_guest_on
+    alias: "WD200 5x-tap up → guest mode on"
+    trigger:
+      - trigger: event
+        event_type: zwave_js_value_notification
+        event_data:
+          device_id: REPLACE_WD200_DEVICE_ID
+          command_class: 91
+          property_key: "001"
+          value: KeyPressed5x
+    action:
+      - action: script.guest_mode_enable
+
+  - id: wd200_5x_down_guest_off
+    alias: "WD200 5x-tap down → guest mode off"
+    trigger:
+      - trigger: event
+        event_type: zwave_js_value_notification
+        event_data:
+          device_id: REPLACE_WD200_DEVICE_ID
+          command_class: 91
+          property_key: "002"
+          value: KeyPressed5x
+    action:
+      - action: script.guest_mode_disable
+
+  - id: guest_keypad_unlock_notify
+    alias: "Guest keypad unlock → notify + LED flash"
+    trigger:
+      - trigger: event
+        event_type: zwave_js_notification
+        event_data:
+          device_id: REPLACE_LOCK_DEVICE_ID
+          command_class: 113
+          type: 6        # Access Control
+          event: 6       # Keypad unlock
+    condition:
+      - condition: template
+        value_template: "{{ (trigger.event.data.parameters | default({})).get('userId') == 5 }}"
+    action:
+      - action: notify.notify
+        data:
+          title: "Front door"
+          message: "Guest code used to unlock the front door."
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 5
+          color: green
+      - delay: "00:00:30"
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 5
+          color: "off"
+          enable_status_mode: false

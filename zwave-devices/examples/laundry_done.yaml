@@ -1,0 +1,55 @@
+# =============================================================================
+# Example: Laundry done (Minoston plug power sensor + WD200)
+# =============================================================================
+# Requires a Minoston plug variant with power metering (or any power sensor)
+# on the washer. A template sensor derives "running" from wattage; when a
+# cycle ends, LED 3 blinks cyan until any paddle tap on the dimmer
+# acknowledges it.
+# =============================================================================
+
+template:
+  - binary_sensor:
+      - name: "Washer running"
+        unique_id: washer_running_power
+        state: "{{ states('sensor.washer_power') | float(0) > 10 }}"
+        delay_off: "00:03:00"   # ride through pauses between cycle phases
+        device_class: running
+
+automation:
+  - id: washer_done_led
+    alias: "Washer done → LED 3 blinking cyan"
+    trigger:
+      - trigger: state
+        entity_id: binary_sensor.washer_running
+        from: "on"
+        to: "off"
+    action:
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 3
+          color: cyan
+          blink: true
+          blink_frequency: 5
+      - action: notify.notify
+        data:
+          title: "Laundry"
+          message: "The washer is done."
+
+  - id: washer_done_ack_any_tap
+    alias: "Any paddle tap → dismiss laundry LED"
+    trigger:
+      - trigger: event
+        event_type: zwave_js_value_notification
+        event_data:
+          device_id: REPLACE_WD200_DEVICE_ID
+          command_class: 91
+          value: KeyPressed
+    action:
+      - action: script.wd200_set_status_led
+        data:
+          target_device: ["REPLACE_WD200_DEVICE_ID"]
+          led: 3
+          color: "off"
+          blink: false
+          enable_status_mode: false
