@@ -1,0 +1,66 @@
+# =============================================================================
+# Example: Alarm panel state on the WD200 LED bar (cross-integration)
+# =============================================================================
+# Works with ANY alarm_control_panel entity — the built-in Manual Alarm, the
+# Alarmo custom integration (github.com/nielsfaber/alarmo), Ring, Konnected,
+# etc. LED 7 (security, per the examples convention):
+#
+#   disarmed        → LED 7 off
+#   armed_home      → LED 7 green
+#   armed_away/night→ LED 7 red
+#   arming/pending  → LED 7 blinking yellow (exit/entry delay running)
+#   triggered       → ALL LEDs blinking red on every dimmer
+# =============================================================================
+
+automation:
+  - id: alarm_state_to_wd200_led
+    alias: "Alarm panel state → WD200 LED 7"
+    mode: queued
+    max: 10
+    trigger:
+      - trigger: state
+        entity_id: alarm_control_panel.REPLACE_alarm
+    action:
+      - variables:
+          all_dimmers: ["REPLACE_WD200_DEVICE_ID"]
+          alarm_state: "{{ trigger.to_state.state }}"
+      - choose:
+          - conditions: "{{ alarm_state == 'triggered' }}"
+            sequence:
+              - action: script.wd200_set_all_status_leds
+                data:
+                  target_device: "{{ all_dimmers }}"
+                  color: red
+                  blink: true
+                  blink_frequency: 2
+          - conditions: "{{ alarm_state in ['arming', 'pending'] }}"
+            sequence:
+              - action: script.wd200_set_status_led
+                data:
+                  target_device: "{{ all_dimmers }}"
+                  led: 7
+                  color: yellow
+                  blink: true
+                  blink_frequency: 5
+          - conditions: "{{ alarm_state in ['armed_away', 'armed_night', 'armed_vacation'] }}"
+            sequence:
+              - action: script.wd200_set_status_led
+                data:
+                  target_device: "{{ all_dimmers }}"
+                  led: 7
+                  color: red
+                  blink: false
+          - conditions: "{{ alarm_state == 'armed_home' }}"
+            sequence:
+              - action: script.wd200_set_status_led
+                data:
+                  target_device: "{{ all_dimmers }}"
+                  led: 7
+                  color: green
+                  blink: false
+        default:
+          # disarmed (or unknown) → clean up, including a possible triggered
+          # full-bar state
+          - action: script.wd200_clear_status
+            data:
+              target_device: "{{ all_dimmers }}"

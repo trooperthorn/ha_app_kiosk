@@ -32,6 +32,11 @@ Everything uses public `zwave_js` services (`set_config_parameter`,
 
 3. Restart Home Assistant (or reload scripts + automations).
 
+`COMMUNITY.md` indexes complementary third-party projects — notably
+[KeyMaster](https://github.com/FutureTense/keymaster) as the upgrade path
+from the `schlage/` scripts when you need scheduled, date-ranged, or
+limited-use lock PINs, and the WD200+ status card for dashboards.
+
 Each vendor directory documents its device's configuration-parameter map at
 the top of the package file. The HomeSeer README additionally covers the
 general architecture, latency tuning, and how to extend *unsupported*

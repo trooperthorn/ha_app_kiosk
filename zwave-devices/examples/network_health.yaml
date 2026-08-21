@@ -1,0 +1,101 @@
+# =============================================================================
+# Example: Z-Wave network health — dead-node auto-ping + silent-sensor watchdog
+# =============================================================================
+# Community-proven pattern (see zwave-devices/COMMUNITY.md): a zwave_js.ping
+# is usually enough to revive a node marked dead. Two layers:
+#
+#  1. Fast path: the moment a listed Node Status sensor turns "dead", ping it.
+#     (Enable each device's "Node status" sensor — it's disabled by default:
+#     device page → +N entities not shown → Node status → enable.)
+#  2. Sweep: every 15 minutes, scan ALL node-status sensors and ping any dead
+#     ones — catches nodes that died while HA was restarting.
+#
+# Plus a data watchdog: alert when a sensor that should report regularly has
+# gone silent, which catches "alive but deaf" nodes that never show as dead.
+# =============================================================================
+
+automation:
+  - id: zwave_dead_node_fast_ping
+    alias: "Z-Wave: Node died → ping immediately"
+    mode: parallel
+    max: 20
+    trigger:
+      - trigger: state
+        entity_id:
+          # List your node-status sensors here for instant recovery:
+          - sensor.REPLACE_device_node_status
+        to: dead
+    action:
+      - action: zwave_js.ping
+        target:
+          entity_id: "{{ trigger.entity_id }}"
+
+  - id: zwave_dead_node_sweep
+    alias: "Z-Wave: Sweep and ping all dead nodes"
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - trigger: time_pattern
+        minutes: "/15"
+    action:
+      - variables:
+          dead_nodes: >-
+            {{ states.sensor
+               | selectattr('entity_id', 'search', 'node_status')
+               | selectattr('state', 'eq', 'dead')
+               | map(attribute='entity_id') | list }}
+      - condition: "{{ dead_nodes | count > 0 }}"
+      - repeat:
+          for_each: "{{ dead_nodes }}"
+          sequence:
+            - action: zwave_js.ping
+              target:
+                entity_id: "{{ repeat.item }}"
+      # Still dead 2 minutes after pinging? Tell somebody.
+      - delay: "00:02:00"
+      - variables:
+          still_dead: >-
+            {{ dead_nodes | select('in', states.sensor
+               | selectattr('state', 'eq', 'dead')
+               | map(attribute='entity_id') | list) | list }}
+      - if: "{{ still_dead | count > 0 }}"
+        then:
+          - action: notify.notify
+            data:
+              title: "Z-Wave network"
+              message: >-
+                Nodes still dead after ping: {{ still_dead | join(', ') }}
+
+  - id: zwave_silent_sensor_watchdog
+    alias: "Z-Wave: Silent sensor watchdog"
+    description: >-
+      Alerts when a sensor that normally reports on an interval has not
+      reported for stale_after_minutes — catches nodes that are technically
+      alive but no longer sending data (dying battery, failed lifeline).
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - trigger: time_pattern
+        minutes: "/30"
+    action:
+      - variables:
+          stale_after_minutes: 60
+          watch_list:
+            # Sensors that should report at least every stale_after_minutes:
+            - sensor.REPLACE_multisensor_temperature
+          stale: >-
+            {% set ns = namespace(stale=[]) %}
+            {% for e in watch_list %}
+              {% set obj = states[e] %}
+              {% if obj is not none and
+                    (now() - (obj.last_reported | default(obj.last_updated, true)))
+                      .total_seconds() > stale_after_minutes * 60 %}
+                {% set ns.stale = ns.stale + [e] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.stale }}
+      - condition: "{{ stale | count > 0 }}"
+      - action: notify.notify
+        data:
+          title: "Z-Wave network"
+          message: "No data for over 1 h from: {{ stale | join(', ') }}"

@@ -1,0 +1,75 @@
+# =============================================================================
+# Example: Actionable phone notifications (mobile_app cross-integration)
+# =============================================================================
+# Requires the Home Assistant Companion app (mobile_app integration).
+# Replace notify.mobile_app_REPLACE_PHONE with your phone's notify service.
+#
+#  - Front door unlocked for 5 minutes → notification with a "Lock now"
+#    button; tapping it locks the BE469ZP from the phone.
+#  - Garage open at bedtime (23:00) → "Close it" button.
+#
+# The action-button pattern: the notification carries an `actions` list; the
+# tap comes back as a `mobile_app_notification_action` event that a second
+# automation handles.
+# =============================================================================
+
+automation:
+  - id: door_unlocked_actionable_notify
+    alias: "Door unlocked 5 min → actionable notification"
+    trigger:
+      - trigger: state
+        entity_id: lock.front_door
+        to: unlocked
+        for: "00:05:00"
+    action:
+      - action: notify.mobile_app_REPLACE_PHONE
+        data:
+          title: "Front door"
+          message: "The front door has been unlocked for 5 minutes."
+          data:
+            actions:
+              - action: LOCK_FRONT_DOOR
+                title: "Lock now"
+
+  - id: handle_lock_front_door_action
+    alias: "Handle 'Lock now' notification action"
+    trigger:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: LOCK_FRONT_DOOR
+    action:
+      - action: lock.lock
+        target:
+          entity_id: lock.front_door
+
+  - id: garage_open_bedtime_actionable_notify
+    alias: "Garage open at bedtime → actionable notification"
+    trigger:
+      - trigger: time
+        at: "23:00:00"
+    condition:
+      - condition: state
+        entity_id: binary_sensor.garage_door
+        state: "on"
+    action:
+      - action: notify.mobile_app_REPLACE_PHONE
+        data:
+          title: "Garage"
+          message: "The garage door is still open."
+          data:
+            actions:
+              - action: CLOSE_GARAGE_DOOR
+                title: "Close it"
+
+  - id: handle_close_garage_action
+    alias: "Handle 'Close it' notification action"
+    trigger:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: CLOSE_GARAGE_DOOR
+    action:
+      - action: cover.close_cover
+        target:
+          entity_id: cover.REPLACE_garage_door

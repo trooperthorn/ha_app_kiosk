@@ -54,6 +54,19 @@ is shared device-wide, so only one "urgency" can blink at a time per dimmer.
   when done, any paddle tap dismisses
 - `vacation_mode.yaml` — one script each to enter/leave vacation posture
   across the lock, motion switch, shades, and plugs
+- `network_health.yaml` — dead-node auto-ping (instant + 15-minute sweep)
+  and a silent-sensor watchdog, per the community-proven `zwave_js.ping`
+  pattern
+- `alarm_panel_led.yaml` — mirrors any `alarm_control_panel` (Manual Alarm,
+  Alarmo, Ring, …) onto LED 7; `triggered` lights every LED blinking red
+- `actionable_notifications.yaml` — mobile_app notifications with "Lock
+  now" / "Close it" buttons for an unlocked door or open garage
+- `presence_and_calendar.yaml` — last-person-out lockup via `zone.home`
+  (deliberately no auto-unlock on arrival), and calendar-scheduled guest
+  PINs driving the guest_code_flow scripts
+
+See `../COMMUNITY.md` for the third-party integrations these pair with
+(Alarmo, NWS Alerts, KeyMaster, the WD200 status card, and more).
 
 Most of these use plain event-trigger automations rather than the blueprints
 so the whole flow is visible in one file; the blueprints remain the better

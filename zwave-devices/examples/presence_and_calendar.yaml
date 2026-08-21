@@ -1,0 +1,79 @@
+# =============================================================================
+# Example: Presence + calendar cross-integrations
+# =============================================================================
+# 1. Departure lockup (person/zone integration): when the last person leaves
+#    home (zone.home count hits 0 for 5 minutes), lock the door, drop the
+#    shades to privacy, and warn if the garage is still open. Deliberately
+#    does NOT auto-unlock on arrival — presence detection is too easy to
+#    spoof/misfire for an unlock; use the keypad, the app, or the actionable
+#    notification example instead.
+#
+# 2. Calendar-driven guest access (calendar integration): a calendar named
+#    calendar.guest_access enables the guest PIN (from guest_code_flow.yaml)
+#    for the duration of any event on it. Create the calendar in Settings →
+#    Devices & Services → Local Calendar, and book "guest" windows on it.
+# =============================================================================
+
+automation:
+  - id: departure_lockup
+    alias: "Last person leaves → lock up"
+    trigger:
+      - trigger: numeric_state
+        entity_id: zone.home
+        below: 1
+        for: "00:05:00"
+    action:
+      - action: lock.lock
+        target:
+          entity_id: lock.front_door
+      - action: script.rsz1_preset
+        data:
+          shades:
+            - cover.living_room_shade
+          preset: privacy
+      - action: script.ge_motion_set_mode
+        data:
+          target_device: ["REPLACE_GE_MOTION_DEVICE_ID"]
+          operation_mode: vacancy
+      - if: "{{ is_state('binary_sensor.garage_door', 'on') }}"
+        then:
+          - action: notify.notify
+            data:
+              title: "Departure"
+              message: "House is locked up, but the garage door is still open!"
+
+  - id: arrival_welcome
+    alias: "First person arrives → welcome (no auto-unlock)"
+    trigger:
+      - trigger: numeric_state
+        entity_id: zone.home
+        above: 0
+    action:
+      - action: script.ge_motion_set_mode
+        data:
+          target_device: ["REPLACE_GE_MOTION_DEVICE_ID"]
+          operation_mode: occupancy
+          timeout: 5_minutes
+      - action: script.rsz1_preset
+        data:
+          shades:
+            - cover.living_room_shade
+          preset: open
+
+  - id: calendar_guest_access_start
+    alias: "Guest calendar event starts → enable guest PIN"
+    trigger:
+      - trigger: calendar
+        event: start
+        entity_id: calendar.guest_access
+    action:
+      - action: script.guest_mode_enable
+
+  - id: calendar_guest_access_end
+    alias: "Guest calendar event ends → disable guest PIN"
+    trigger:
+      - trigger: calendar
+        event: end
+        entity_id: calendar.guest_access
+    action:
+      - action: script.guest_mode_disable

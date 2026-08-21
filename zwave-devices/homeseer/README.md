@@ -157,6 +157,14 @@ several indicators on the same dimmer don't race.
    wrap the scripts with `template` select/light helpers per device — still
    pure YAML.
 
+## Dashboard mirror
+
+The community [Lovelace HomeSeer WD200+ Status Card](https://community.home-assistant.io/t/lovelace-homeseer-wd200-status-card/322842)
+(rodpayne) renders the 7 status LEDs' color/blink state on a dashboard, so
+the wall dimmer and the UI (or a kiosk display) show the same status. Install
+per its thread: copy `homeseer-wd200-status-card.js` to `/config/www/`, add
+it as a dashboard resource, then add the card pointing at your dimmer.
+
 ## Verifying it works
 
 1. Z-Wave JS device page → the WD200+ should list config parameters 13/14/21–27/30/31.
