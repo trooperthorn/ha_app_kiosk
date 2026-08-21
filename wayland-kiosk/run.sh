@@ -91,7 +91,7 @@ for attempt in $(seq 1 5); do
 done
 
 if [ "$SUPERVISOR_READY" -eq 0 ]; then
-    bashio::log.error "Supervisor API did not respond after 5 attempts. Options will fall back to script defaults for now -- but the rotation and screen-timeout tasks will keep polling and pick up the real values if the API recovers within ~60s. If the API never recovers for an entire run: one-off -> known transient Supervisor issue (home-assistant/supervisor#1930), try 'ha supervisor restart' then restart this add-on; every run -> likely a stale add-on registration/token (this add-on's slug changed from haos_wayland_kiosk to app_kiosk), which needs a full UNINSTALL + reinstall so Supervisor issues a fresh token."
+    bashio::log.error "Supervisor API did not respond after 5 attempts. Options will fall back to script defaults for now -- but the rotation and screen-timeout tasks will keep polling and pick up the real values if the API recovers within ~5 minutes. If the API never recovers for an entire run: one-off -> known transient Supervisor issue (home-assistant/supervisor#1930), try 'ha supervisor restart' then restart this add-on; every run -> likely a stale add-on registration/token (this add-on's slug changed from haos_wayland_kiosk to app_kiosk), which needs a full UNINSTALL + reinstall so Supervisor issues a fresh token."
 fi
 
 # ---------------------------------------------------------
@@ -211,12 +211,14 @@ bashio::log.info "Rotation config '$ROTATION_CONFIG' -> output transform $ROTATI
 
 # The Supervisor API has been observed rejecting this add-on's token for a
 # window around startup (403 on every bashio::config call) and then
-# accepting the very same token a little later. When that happens, the
+# accepting the very same token minutes later. When that happens, the
 # option reads above all fall back to script defaults. Rather than losing
 # rotation and screen-timeout for the whole run, the background tasks below
 # re-read their option once the compositor is up, polling until the API
-# recovers (or ~60s pass). Echoes the freshest value; bashio logs its own
-# errors to stderr, so command substitution captures only the value.
+# recovers (or ~5 minutes pass -- the recovery window has been observed to
+# exceed one minute in the field, and a kiosk rotating late beats never).
+# Echoes the freshest value; bashio logs its own errors to stderr, so
+# command substitution captures only the value.
 reread_option_if_api_was_down() {
     local name="$1"
     local current="$2"
@@ -226,7 +228,7 @@ reread_option_if_api_was_down() {
         echo "$current"
         return 0
     fi
-    while [ "$i" -lt 12 ]; do
+    while [ "$i" -lt 60 ]; do
         val=$(bashio::config "$name" 2>/dev/null || true)
         if [ -n "$val" ] && [ "$val" != "null" ]; then
             echo "$val"
