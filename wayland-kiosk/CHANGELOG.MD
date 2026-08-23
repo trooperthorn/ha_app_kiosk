@@ -11,6 +11,19 @@
   `docker ps -a` and `docker rm -f` any kiosk container Supervisor no
   longer manages.
 
+## 2026.08.23.1
+- Silenced Chromium's GCM phone-home log spam ("Registration response
+  error message: DEPRECATED_ENDPOINT / PHONE_REGISTRATION_ERROR") at the
+  source with `--disable-background-networking`,
+  `--disable-component-update` and `--disable-features=GCM` (same fix as
+  chromiumembedded/cef#4078). These services are useless on a kiosk.
+  Deliberately did NOT add `--log-level=3` -- that only hides ERROR
+  output, and ERROR lines have repeatedly been the diagnostic signal for
+  real bugs in this add-on.
+- Added `--disable-dev-shm-usage`: Docker's default 64MB /dev/shm can be
+  exceeded by Chromium rendering a large dashboard, crashing tabs; this
+  makes Chromium use /tmp instead.
+
 ## 2026.08.20.5
 - Extended the Supervisor-API recovery polling for rotation and
   screen-timeout from ~60s to ~5 minutes: the startup window in which the
