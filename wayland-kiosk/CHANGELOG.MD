@@ -11,6 +11,17 @@
   `docker ps -a` and `docker rm -f` any kiosk container Supervisor no
   longer manages.
 
+## 2026.08.20.5
+- Extended the Supervisor-API recovery polling for rotation and
+  screen-timeout from ~60s to ~5 minutes: the startup window in which the
+  Supervisor rejects the add-on's token (403) has been observed to exceed
+  one minute in the field, and applying rotation late beats never.
+- FAQ, verified: the API "forbidden" errors are NOT a wrong port (bashio
+  talks to `http://supervisor/`, injected by Supervisor -- a 403 means the
+  request arrived and was answered) and are NOT affected by Protection
+  Mode (Supervisor validates the token before any privilege/role check,
+  so disabling protection changes nothing about them).
+
 ## 2026.08.20.4
 - Fix: rotation and screen-timeout now recover when the Supervisor API
   rejects the add-on token during the startup window (403 at boot, 200
