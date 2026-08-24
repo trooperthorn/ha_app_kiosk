@@ -11,6 +11,17 @@
   `docker ps -a` and `docker rm -f` any kiosk container Supervisor no
   longer manages.
 
+## 2026.08.23.2
+- Fix: Chromium restored previous-session tabs on top of the kiosk URL
+  (URL visible in multiple tabs, address bar showing -- i.e. kiosk
+  presentation broken). Cause: the persistent profile added earlier means
+  Chromium remembers its session, and a kiosk container never exits
+  cleanly, so every boot looked like a crash recovery and stacked one
+  more tab. run.sh now rewrites the profile's exit state to "clean"
+  before every launch and adds `--disable-session-crashed-bubble` /
+  `--hide-crash-restore-bubble`. If tabs already accumulated from before
+  this fix, one more restart clears them.
+
 ## 2026.08.23.1
 - Silenced Chromium's GCM phone-home log spam ("Registration response
   error message: DEPRECATED_ENDPOINT / PHONE_REGISTRATION_ERROR") at the

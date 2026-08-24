@@ -407,6 +407,21 @@ fi
 # /data lets a real login session survive add-on/container restarts.
 CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --user-data-dir=/data/chromium-profile"
 
+# The persistent profile has a side effect: a kiosk container never exits
+# cleanly (every stop kills Chromium mid-flight), so the profile records
+# exit_type "Crashed". On the next boot Chromium then RESTORES the previous
+# session's tabs on top of the command-line URL -- accumulating one more
+# tab per restart and breaking out of clean kiosk presentation (visible
+# address bar, the URL stacked in multiple tabs). Standard kiosk fix:
+# rewrite the previous session as cleanly exited before every launch, and
+# suppress the crash-restore machinery via flags.
+CHROMIUM_PREFS="/data/chromium-profile/Default/Preferences"
+if [ -f "$CHROMIUM_PREFS" ]; then
+    sed -i 's/"exited_cleanly":false/"exited_cleanly":true/' "$CHROMIUM_PREFS" 2>/dev/null || true
+    sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' "$CHROMIUM_PREFS" 2>/dev/null || true
+fi
+CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --disable-session-crashed-bubble --hide-crash-restore-bubble"
+
 bashio::log.info "Starting Cage with Chromium pointing to: ${URL}"
 
 exec cage -s -- chromium-browser ${CHROMIUM_FLAGS} "${URL}"
