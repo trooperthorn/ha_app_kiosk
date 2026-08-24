@@ -11,6 +11,41 @@
   `docker ps -a` and `docker rm -f` any kiosk container Supervisor no
   longer manages.
 
+## 2026.08.24.1
+- Fix: `rotate_display` falling back to `normal` on a boot-time Supervisor
+  API outage, even though this kiosk's actual default is `right`
+  (config.yaml's `options.rotate_display`). The script-level fallback in
+  run.sh hardcoded "normal" separately from that default -- changed it to
+  "right" so an outage never silently un-rotates the display.
+- Fix: the BusyBox `stat` usage/help text dumping into the log on every
+  boot, immediately followed by `sh: 0: unknown operand`. Root cause
+  (verified against Alpine's aports APKBUILD): `chromium` and
+  `chromium-browser` on PATH are both symlinks to the same
+  `chromium-launcher.sh` wrapper, whose root-user safety check
+  (`stat -c %u -L "$HOME"`) uses a `-L` flag this image's BusyBox `stat`
+  applet doesn't support. Chromium is now launched directly at
+  `/usr/lib/chromium/chromium` (the exact path the wrapper itself resolves
+  to and execs), skipping the wrapper and its broken check entirely --
+  with a runtime fallback to `chromium-browser` if that path is ever
+  missing, so a future package layout change degrades to log spam rather
+  than failing to start.
+- Fix (log-spam reduction): the rotation and screen-timeout recovery
+  polling (added in 2026.08.20.4/.5) ran as two fully independent loops,
+  each calling `bashio::config` on its own schedule -- roughly doubling
+  the "Unable to access the API, forbidden" lines bashio itself logs on
+  every failed call during a long Supervisor outage. Note: `2>/dev/null`
+  on those calls never actually suppressed bashio's own log output --
+  bashio's log functions (lib/log.sh) write straight to a file descriptor
+  saved before any redirection happens, so there was never a way to
+  silence them from here, only to make fewer calls. Replaced both loops
+  with ONE shared poller with an initial 30s delay and backoff
+  (15/15/30/30/60/60/60s, ~5 minutes total) instead of a flat 5s interval
+  -- about 8 total calls across a bad outage instead of up to 120.
+- Confirmed benign, left as-is: the dbus "Failed to connect to the bus"
+  lines (no D-Bus daemon in this container; Chromium degrades gracefully)
+  and the Vulkan/libvk_swiftshader warnings (no software Vulkan renderer
+  installed; irrelevant since GPU rendering via amdgpu/EGL already works).
+
 ## 2026.08.23.2
 - Fix: Chromium restored previous-session tabs on top of the kiosk URL
   (URL visible in multiple tabs, address bar showing -- i.e. kiosk
