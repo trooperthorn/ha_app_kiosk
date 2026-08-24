@@ -383,7 +383,18 @@ esac
 # ---------------------------------------------------------
 # CHROMIUM RUNTIME
 # ---------------------------------------------------------
-CHROMIUM_FLAGS="--kiosk --no-sandbox --enable-features=UseOzonePlatform --ozone-platform=wayland --disable-infobars --remote-debugging-port=9222 --no-first-run --disable-sync"
+# --disable-background-networking / --disable-component-update /
+# --disable-features=GCM: stop Chromium's Google Cloud Messaging and
+# update phone-home attempts, which are useless on a kiosk and spam the
+# log with "Registration response error message: DEPRECATED_ENDPOINT /
+# PHONE_REGISTRATION_ERROR" (see chromiumembedded/cef#4078 for the same
+# fix). Deliberately NOT using --log-level=3 to hide them instead --
+# ERROR-level output has repeatedly been the diagnostic signal for real
+# bugs in this add-on.
+# --disable-dev-shm-usage: Docker gives containers a 64MB /dev/shm by
+# default; Chromium rendering a large dashboard can exceed it and crash
+# tabs. This makes Chromium use /tmp instead.
+CHROMIUM_FLAGS="--kiosk --no-sandbox --enable-features=UseOzonePlatform --ozone-platform=wayland --disable-infobars --remote-debugging-port=9222 --no-first-run --disable-sync --disable-background-networking --disable-component-update --disable-features=GCM --disable-dev-shm-usage"
 
 if bashio::config.true 'ignore_certificate_errors'; then
     CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --ignore-certificate-errors"
