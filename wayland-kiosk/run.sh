@@ -117,7 +117,11 @@ if [ -z "$SCREEN_TIMEOUT" ] || [ "$SCREEN_TIMEOUT" == "null" ]; then
 fi
 
 if [ -z "$ROTATION_CONFIG" ] || [ "$ROTATION_CONFIG" == "null" ]; then
-    ROTATION_CONFIG="normal"
+    # "right" is this kiosk's actual default (matches config.yaml's
+    # options.rotate_display) -- NOT "normal". A boot-time Supervisor API
+    # outage otherwise silently reverted rotation to normal every time,
+    # which is exactly the failure mode this add-on has hit repeatedly.
+    ROTATION_CONFIG="right"
 fi
 
 if [ -z "$AUTH_METHOD" ] || [ "$AUTH_METHOD" == "null" ]; then
@@ -212,32 +216,65 @@ bashio::log.info "Rotation config '$ROTATION_CONFIG' -> output transform $ROTATI
 # The Supervisor API has been observed rejecting this add-on's token for a
 # window around startup (403 on every bashio::config call) and then
 # accepting the very same token minutes later. When that happens, the
-# option reads above all fall back to script defaults. Rather than losing
-# rotation and screen-timeout for the whole run, the background tasks below
-# re-read their option once the compositor is up, polling until the API
-# recovers (or ~5 minutes pass -- the recovery window has been observed to
-# exceed one minute in the field, and a kiosk rotating late beats never).
-# Echoes the freshest value; bashio logs its own errors to stderr, so
-# command substitution captures only the value.
-reread_option_if_api_was_down() {
-    local name="$1"
-    local current="$2"
+# option reads above all fall back to script defaults, and rotation /
+# screen-timeout need to recover once the API comes back rather than
+# staying wrong for the whole run.
+#
+# IMPORTANT: bashio's log functions (lib/log.sh) write straight to a file
+# descriptor it saves BEFORE any redirection happens (`exec {LOG_FD}>&1`
+# at source time), so `bashio::config ... 2>/dev/null` does NOT suppress
+# the "Unable to access the API, forbidden" / "Failed to get addon config"
+# lines bashio itself logs on every failed call -- that was tried and
+# doesn't work. The only lever available from here is fewer calls. So:
+# ONE shared poller (not one per consumer -- two independent pollers used
+# to roughly double the log volume), with an initial delay and backoff
+# instead of a flat interval: waits 30s before the first retry (5 attempts
+# were already made seconds apart during boot, so retrying immediately is
+# unlikely to help), then 15s/15s/30s/30s/60s/60s/60s -- about 8 total
+# canary calls across a ~5 minute window instead of up to 120.
+RECOVERED_ROTATION_FILE="/tmp/.kiosk_recovered_rotation"
+RECOVERED_SCREEN_TIMEOUT_FILE="/tmp/.kiosk_recovered_screen_timeout"
+rm -f "$RECOVERED_ROTATION_FILE" "$RECOVERED_SCREEN_TIMEOUT_FILE"
+if [ "$SUPERVISOR_READY" -eq 0 ]; then
+    (
+        for delay in 30 15 15 30 30 60 60 60; do
+            sleep "$delay"
+            recovered_url=$(bashio::config 'ha_url' 2>/dev/null || true)
+            if [ -n "$recovered_url" ] && [ "$recovered_url" != "null" ]; then
+                bashio::config 'rotate_display' >"$RECOVERED_ROTATION_FILE" 2>/dev/null || true
+                bashio::config 'screen_timeout' >"$RECOVERED_SCREEN_TIMEOUT_FILE" 2>/dev/null || true
+                bashio::log.info "Supervisor API recovered -- rotation and screen_timeout will use the configured values from here on."
+                exit 0
+            fi
+        done
+        bashio::log.warning "Supervisor API did not recover within ~5 minutes -- keeping boot-time fallback values (rotate_display '${ROTATION_CONFIG}', screen_timeout ${SCREEN_TIMEOUT}s) for this run."
+    ) &
+fi
+
+# Waits for the shared poller above to either write its result file or
+# give up. Makes no bashio::config calls of its own, so it adds zero
+# further log noise -- just a plain `[ -f ]` check on a local file.
+wait_for_recovered_option() {
+    local file="$1"
+    local fallback="$2"
+    local elapsed=0
     local val=""
-    local i=0
     if [ "$SUPERVISOR_READY" -eq 1 ]; then
-        echo "$current"
+        echo "$fallback"
         return 0
     fi
-    while [ "$i" -lt 60 ]; do
-        val=$(bashio::config "$name" 2>/dev/null || true)
-        if [ -n "$val" ] && [ "$val" != "null" ]; then
-            echo "$val"
-            return 0
+    while [ "$elapsed" -lt 305 ]; do
+        if [ -f "$file" ]; then
+            val=$(cat "$file" 2>/dev/null || true)
+            if [ -n "$val" ] && [ "$val" != "null" ]; then
+                echo "$val"
+                return 0
+            fi
         fi
-        sleep 5
-        i=$((i + 1))
+        sleep 2
+        elapsed=$((elapsed + 2))
     done
-    echo "$current"
+    echo "$fallback"
 }
 
 # ---------------------------------------------------------
@@ -282,7 +319,7 @@ wait_for_wayland_socket() {
         exit 0
     }
     export WAYLAND_DISPLAY="$wl_display"
-    timeout_final=$(reread_option_if_api_was_down 'screen_timeout' "$SCREEN_TIMEOUT")
+    timeout_final=$(wait_for_recovered_option "$RECOVERED_SCREEN_TIMEOUT_FILE" "$SCREEN_TIMEOUT")
     if [ "$timeout_final" != "$SCREEN_TIMEOUT" ]; then
         bashio::log.info "Supervisor API recovered -- screen_timeout is ${timeout_final}s (boot-time fallback was ${SCREEN_TIMEOUT}s)."
     fi
@@ -311,7 +348,7 @@ python3 /app/rest_server.py &
         exit 0
     }
     export WAYLAND_DISPLAY="$wl_display"
-    rotation_final=$(reread_option_if_api_was_down 'rotate_display' "$ROTATION_CONFIG")
+    rotation_final=$(wait_for_recovered_option "$RECOVERED_ROTATION_FILE" "$ROTATION_CONFIG")
     transform=$(rotation_to_transform "$rotation_final")
     if [ "$transform" != "normal" ]; then
         bashio::log.info "Applying rotation '${rotation_final}' (transform ${transform}) to $ACTIVE_OUTPUT..."
@@ -407,6 +444,53 @@ fi
 # /data lets a real login session survive add-on/container restarts.
 CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --user-data-dir=/data/chromium-profile"
 
+# The persistent profile has a side effect: a kiosk container never exits
+# cleanly (every stop kills Chromium mid-flight), so the profile records
+# exit_type "Crashed". On the next boot Chromium then RESTORES the previous
+# session's tabs on top of the command-line URL -- accumulating one more
+# tab per restart and breaking out of clean kiosk presentation (visible
+# address bar, the URL stacked in multiple tabs). Standard kiosk fix:
+# rewrite the previous session as cleanly exited before every launch, and
+# suppress the crash-restore machinery via flags.
+CHROMIUM_PREFS="/data/chromium-profile/Default/Preferences"
+if [ -f "$CHROMIUM_PREFS" ]; then
+    sed -i 's/"exited_cleanly":false/"exited_cleanly":true/' "$CHROMIUM_PREFS" 2>/dev/null || true
+    sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' "$CHROMIUM_PREFS" 2>/dev/null || true
+fi
+CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --disable-session-crashed-bubble --hide-crash-restore-bubble"
+
+# Launching the REAL chromium binary at its full path, not `chromium` /
+# `chromium-browser` on PATH -- on this Alpine image BOTH of those are
+# just symlinks to the same chromium-launcher.sh wrapper script
+# (confirmed in the aports APKBUILD: chromium-browser -> chromium-launcher.sh,
+# chromium -> chromium-browser), so calling either still runs the wrapper.
+# That wrapper's own root-user safety check --
+#   [ $(id -u) -eq 0 ] && [ $(stat -c %u -L "$HOME") -eq 0 ]
+# -- calls `stat -L`, a flag this image's BusyBox stat applet does not
+# support (its own usage text lists only `[-ltf] [-c FMT]`, no -L). The
+# broken stat call dumps BusyBox's full usage/help text into the log on
+# every single boot, immediately followed by a "sh: 0: unknown operand"
+# from the now-empty `$(...)` feeding the `-eq 0` test -- both harmless
+# (the wrapper's own final `exec "$PROGDIR/chromium" ...` still runs
+# Chromium either way) but pure noise. The wrapper's only functional
+# purpose is to auto-add --user-data-dir when the caller didn't supply
+# one, so root doesn't hit Chromium's own refusal to run with a
+# root-owned profile dir -- we already pass --user-data-dir explicitly
+# above, so calling the real binary directly (the exact path the wrapper
+# itself resolves $PROGDIR to and execs) skips the wrapper, and its
+# broken check, with no loss of behavior. CHROME_DESKTOP is set to match
+# what the wrapper would have set, for parity with anything that reads it
+# (About page branding, etc).
+CHROMIUM_BIN="/usr/lib/chromium/chromium"
+if [ ! -x "$CHROMIUM_BIN" ]; then
+    # Safety net in case a future package revision moves the binary:
+    # fall back to the wrapper rather than fail to start the kiosk over a
+    # log-spam cosmetic issue.
+    bashio::log.warning "${CHROMIUM_BIN} not found -- falling back to the chromium-browser wrapper (expect the BusyBox stat log spam this was meant to avoid)."
+    CHROMIUM_BIN="chromium-browser"
+fi
+export CHROME_DESKTOP="chromium.desktop"
+
 bashio::log.info "Starting Cage with Chromium pointing to: ${URL}"
 
-exec cage -s -- chromium-browser ${CHROMIUM_FLAGS} "${URL}"
+exec cage -s -- "${CHROMIUM_BIN}" ${CHROMIUM_FLAGS} "${URL}"
