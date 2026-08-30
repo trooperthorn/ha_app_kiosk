@@ -12,9 +12,86 @@ By replacing the aging X11 stack with a direct Wayland compositor (Cage), this a
 
 ## Configuration Options
 
-* **ha_url**: The URL the kiosk should load on boot. (Default: `http://supervisor/core`)
-* **rotate_display**: Hardware rotation mapping. Supports `normal`, `right` (90°), `inverted` (180°), or `left` (270°).
-* **ignore_certificate_errors**: Set to `true` if your URL relies on self-signed SSL certificates.
+Honesty note: not every option in the configuration screen is applied yet.
+The table below states exactly which options are wired into run.sh and which
+are accepted by the schema but currently have no effect. Do not assume an
+option works because it appears in the UI.
+
+| Option | Status | Effect |
+|---|---|---|
+| `ha_url` | applied | URL the kiosk loads. Default `http://127.0.0.1:8123` (requires `host_network`). |
+| `ha_dashboard` | applied | Appended to `ha_url` as a path. Default `lovelace`, which is Home Assistant's Overview dashboard. |
+| `rotate_display` | applied | Output transform via `wlr-randr`: `normal`, `right` (270), `inverted` (180), `left` (90). Touch rotates with the output automatically under wlroots. Default `right`; the script fallback matches, so a Supervisor API outage cannot silently un-rotate the display. |
+| `screen_timeout` | applied | Seconds of idle before the output powers off via swayidle. `0` disables blanking (default). Fallback also `0`. |
+| `auth_method` | applied | `trusted_networks` (default, needs Core-side configuration, see below), `credentials` (types the login form once via wtype), or `none`. |
+| `ha_username` / `ha_password` | applied | Only used when `auth_method: credentials`. |
+| `login_delay` | applied | Seconds to wait for the login page before giving up on auto-login. |
+| `ignore_certificate_errors` | applied | Passes `--ignore-certificate-errors` to Chromium for self-signed HTTPS. |
+| `api_token` | applied | Bearer token required by the local REST control API (rest_server.py). Leave blank to run it unauthenticated (not recommended). |
+| `browser_refresh` | not applied yet | Accepted by the schema, read nowhere. Intended as a periodic page refresh interval; not implemented. |
+| `ha_sidebar` | not applied yet | Accepted by the schema, read nowhere. Hiding the sidebar is better done with the kiosk-mode frontend plugin inside Home Assistant. |
+| `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
+| `dark_mode` | not applied yet | Accepted by the schema, read nowhere. Set dark mode per-user in Home Assistant instead. |
+
+## Boot and reboot behavior
+
+The add-on is designed to survive a host reboot without intervention:
+
+1. Enable the **Start on boot** toggle on the add-on's Info page. Supervisor
+   then starts the add-on at every boot (`startup: application` orders it
+   after Home Assistant Core is launched).
+2. Enable the **Watchdog** toggle as well. rest_server.py monitors Chromium
+   through the DevTools endpoint and deliberately kills the compositor if
+   Chromium freezes; the container then exits and Supervisor's watchdog is
+   what restarts it. Without the toggle, a frozen kiosk stays dead.
+3. At a cold boot, Core is often launched but not yet serving HTTP when this
+   add-on starts. run.sh waits (up to 5 minutes) for an HTTP response from
+   `ha_url` before starting the browser, because Chromium never retries a
+   failed connection on its own. The screen stays black during that wait
+   instead of parking on a dead "connection refused" page.
+4. If the Supervisor API rejects the add-on's token during the startup
+   window (a recurring Supervisor-side issue, see the troubleshooting
+   section), rotation and screen-timeout fall back to the documented
+   defaults (`right`, `0`) and a single background poller re-reads the real
+   values when the API recovers.
+
+## Browser Mod, camera popups, and automations
+
+The kiosk is a normal Home Assistant frontend session, so the
+[Browser Mod](https://github.com/thomasloven/hass-browser_mod) integration
+(installed via HACS in Home Assistant, not in this add-on) works on it: once
+the dashboard is loaded, open the Browser Mod panel from the sidebar on any
+other device, find this browser in the list, and register it with a
+recognizable Browser ID (for example `kiosk_display`). The add-on's
+persistent Chromium profile keeps that Browser ID stable across restarts
+and reboots; nothing in the launch flags blocks the websocket Browser Mod
+uses.
+
+A camera popup from an automation then looks like this:
+
+```yaml
+alias: "Doorbell camera popup on kiosk"
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.doorbell_motion
+    to: "on"
+actions:
+  - action: browser_mod.popup
+    data:
+      browser_id: kiosk_display
+      title: "Front door"
+      timeout: 15000
+      content:
+        type: picture-glance
+        camera_image: camera.front_door
+        camera_view: live
+        entities: []
+```
+
+`browser_mod.popup` draws over whatever dashboard the kiosk is showing and
+dismisses itself after `timeout` milliseconds. The same mechanism covers
+scripts (`action: browser_mod.popup` inside any script) and navigation
+(`browser_mod.navigate` to send the kiosk to another dashboard).
 
 ## Device access: how it works and how it broke
 
@@ -59,10 +136,14 @@ Check the add-on log for repeated `Unable to access the API, forbidden` /
 `Failed to get addon config from Supervisor API` lines. If that only
 happens once or twice at boot, it's a known transient Supervisor race
 (home-assistant/supervisor#1930) and resolves itself. If it happens for
-the *entire* run, every option silently falls back to its script default
-(`rotate_display` becomes `normal`, `screen_timeout` becomes `600`, etc.)
-regardless of what's configured in the add-on's UI -- this looks like
-rotation "not working" but is actually the config never being read at all.
+the *entire* run, every option falls back to its script default. Since
+2026.08.24.x those fallbacks mirror the documented defaults (`right`
+rotation, screen timeout `0`, `trusted_networks`), so an outage no longer
+changes behavior away from the defaults -- but any NON-default values you
+configured (a different dashboard, `credentials` auth, a custom URL) still
+cannot be read until the API recovers. A background poller retries for
+about 5 minutes and applies rotation and screen-timeout late if the API
+comes back.
 
 This add-on's slug changed from `haos_wayland_kiosk` to `app_kiosk` on
 2026-08-13. If you had it installed under the old slug, Supervisor can be
