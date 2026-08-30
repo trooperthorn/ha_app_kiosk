@@ -11,6 +11,32 @@
   `docker ps -a` and `docker rm -f` any kiosk container Supervisor no
   longer manages.
 
+## 2026.08.24.2
+- Boot ordering: run.sh now waits (up to 5 minutes) for `ha_url` to serve
+  an HTTP response before launching the browser. At a cold boot, Core is
+  launched before this add-on but often is not serving yet, and Chromium
+  never retries a failed connection on its own, so a host reboot used to
+  park the kiosk on a dead "connection refused" page.
+- Fix: the script-level `screen_timeout` fallback was 600 while the
+  documented default (config.yaml) is 0, so any boot with the Supervisor
+  API down started blanking the screen after 10 minutes. Fallback now
+  mirrors the default (0, disabled), same principle as the rotate_display
+  fallback fix in 2026.08.24.1.
+- Wired the `ha_dashboard` option into the loaded URL (it was accepted by
+  the schema but read nowhere). Default `lovelace` lands the kiosk on
+  Home Assistant's Overview dashboard.
+- Exported HOME=/root: Chromium expects HOME for its NSS certificate
+  store, and the chromium-browser wrapper retained as the launch fallback
+  checks `stat -c %u -L ${XDG_CONFIG_HOME:-${HOME}}`; with HOME unset that
+  ran with no file argument (the actual trigger for the BusyBox usage-text
+  dump) and its `[ $(...) -eq 0 ]` test collapsed to the
+  "sh: 0: unknown operand" error. The fallback path is now clean too.
+- DOCS: added an honest option-status table (browser_refresh, ha_sidebar,
+  ha_theme, and dark_mode are accepted by the schema but not applied yet),
+  a boot/reboot behavior section (Start on boot + Watchdog toggles, the
+  new HTTP wait), and a Browser Mod section with a worked camera-popup
+  automation example.
+
 ## 2026.08.24.1
 - Fix: `rotate_display` falling back to `normal` on a boot-time Supervisor
   API outage, even though this kiosk's actual default is `right`

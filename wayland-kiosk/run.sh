@@ -37,6 +37,20 @@ export XDG_RUNTIME_DIR=/tmp/xdg
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
 
+# HOME is not set in the s6/bashio environment. Two reasons to export it:
+# 1. Chromium itself expects HOME for its NSS certificate store and dconf
+#    lookups when running as root.
+# 2. The chromium-browser wrapper (still used as the runtime FALLBACK when
+#    /usr/lib/chromium/chromium is missing, see the launch section) checks
+#    `stat -c %u -L ${XDG_CONFIG_HOME:-${HOME}}`. With HOME empty that runs
+#    with no file argument at all, which is what makes BusyBox stat print
+#    its whole usage text into the log, and the surrounding
+#    `[ $(...) -eq 0 ]` test then collapses to `[ -eq 0 ]` (the
+#    "sh: 0: unknown operand" line). With HOME set, even the fallback path
+#    is clean. Our explicit --user-data-dir still wins either way because
+#    Chromium takes the last occurrence of a repeated switch.
+export HOME=/root
+
 # ---------------------------------------------------------
 # SEAT MANAGEMENT (seatd)
 # ---------------------------------------------------------
@@ -105,15 +119,32 @@ AUTH_METHOD=$(bashio::config 'auth_method')
 HA_USERNAME=$(bashio::config 'ha_username')
 HA_PASSWORD=$(bashio::config 'ha_password')
 LOGIN_DELAY=$(bashio::config 'login_delay')
+HA_DASHBOARD=$(bashio::config 'ha_dashboard')
 
 if [ -z "$URL" ] || [ "$URL" == "null" ]; then
     URL="http://127.0.0.1:8123"
     bashio::log.warning "HA API returned blank URL. Forcing default to http://127.0.0.1:8123"
 fi
 
+# Append the dashboard path so the kiosk lands on the configured dashboard
+# (the default "lovelace" is Home Assistant's Overview page) instead of
+# whatever Core decides to serve at the bare URL. This option existed in
+# the configuration schema before but was never applied. When the API is
+# down, HA_DASHBOARD stays empty and the bare URL is used, which still
+# lands on the default dashboard after login.
+if [ -n "$HA_DASHBOARD" ] && [ "$HA_DASHBOARD" != "null" ]; then
+    URL="${URL%/}/${HA_DASHBOARD#/}"
+    bashio::log.info "Dashboard path applied -- kiosk will load: ${URL}"
+fi
+
 if [ -z "$SCREEN_TIMEOUT" ] || [ "$SCREEN_TIMEOUT" == "null" ]; then
-    SCREEN_TIMEOUT=600
-    bashio::log.warning "HA API returned blank timeout. Forcing 600s."
+    # 0 (disabled) is this add-on's actual default (config.yaml's
+    # options.screen_timeout) -- same principle as the rotate_display
+    # fallback below: an API outage must not change documented behavior.
+    # The old fallback of 600 made the screen start blanking after 10
+    # minutes on any boot where the API was down.
+    SCREEN_TIMEOUT=0
+    bashio::log.warning "Could not read screen_timeout. Falling back to the add-on default: 0 (disabled)."
 fi
 
 if [ -z "$ROTATION_CONFIG" ] || [ "$ROTATION_CONFIG" == "null" ]; then
@@ -278,6 +309,34 @@ wait_for_recovered_option() {
 }
 
 # ---------------------------------------------------------
+# WAIT FOR HOME ASSISTANT TO SERVE HTTP (boot ordering)
+# ---------------------------------------------------------
+# `startup: application` means Supervisor starts this add-on after Core is
+# launched, but at a cold boot Core can take a minute or more before it
+# actually serves HTTP. Chromium does not retry a failed connection on its
+# own, so without this wait a host reboot landed the kiosk on a dead
+# "connection refused" error page until someone restarted the add-on.
+# Any HTTP response counts as "serving" (an auth redirect or 404 is fine);
+# -k because ha_url may use a self-signed certificate. Bounded at 5
+# minutes, then the browser launches anyway so a broken URL still surfaces
+# visibly instead of blocking forever.
+ha_wait=0
+until curl -ks --max-time 3 -o /dev/null "$URL"; do
+    ha_wait=$((ha_wait + 5))
+    if [ "$ha_wait" -ge 300 ]; then
+        bashio::log.warning "No HTTP response from ${URL} after 300s. Launching the browser anyway -- it may show a connection error until Home Assistant is reachable."
+        break
+    fi
+    if [ $((ha_wait % 30)) -eq 0 ]; then
+        bashio::log.info "Waiting for Home Assistant at ${URL} to serve HTTP (${ha_wait}s elapsed)..."
+    fi
+    sleep 5
+done
+if [ "$ha_wait" -lt 300 ]; then
+    bashio::log.info "Home Assistant is serving HTTP at ${URL} (waited ${ha_wait}s)."
+fi
+
+# ---------------------------------------------------------
 # BACKGROUND SERVICES
 # ---------------------------------------------------------
 
@@ -304,8 +363,9 @@ wait_for_wayland_socket() {
 }
 
 # Screen timeout. Spawned unconditionally: if the Supervisor API was down
-# at boot, SCREEN_TIMEOUT holds the fallback (600), and the subshell
-# re-reads the real value once the API recovers before deciding.
+# at boot, SCREEN_TIMEOUT holds the fallback (0, the documented default),
+# and the subshell picks up the real configured value once the API
+# recovers before deciding.
 #
 # NOTE: wlr-randr has NO wildcard support -- `--output *` fails with
 # "unknown output *" (a previous version did exactly that, so blanking
