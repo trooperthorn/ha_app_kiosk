@@ -33,6 +33,40 @@ option works because it appears in the UI.
 | `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
 | `dark_mode` | not applied yet | Accepted by the schema, read nowhere. Set dark mode per-user in Home Assistant instead. |
 
+## Login: trusted_networks that actually bypasses
+
+For `auth_method: trusted_networks`, Home Assistant Core needs an
+`auth_providers` block in its own `configuration.yaml`. **Provider order
+matters**: the login flow works through the list in order, so
+`trusted_networks` must come FIRST or the kiosk is handed the password
+form as the default and never auto-logs-in. Password login everywhere
+else keeps working because the `homeassistant` provider stays in the
+list as the second entry.
+
+```yaml
+homeassistant:
+  auth_providers:
+    - type: trusted_networks
+      trusted_networks:
+        - 127.0.0.1/32
+        - ::1/128
+      trusted_users:
+        127.0.0.1:
+          - YOUR_USER_ID_FROM_SETTINGS_PEOPLE_URL
+        ::1:
+          - YOUR_USER_ID_FROM_SETTINGS_PEOPLE_URL
+      allow_bypass_login: true
+    - type: homeassistant
+```
+
+`allow_bypass_login: true` skips the login screen entirely when exactly
+one user is eligible for the connecting IP; `trusted_users` pins which
+user that is. After editing, a full Core restart is required
+(`auth_providers` is not hot-reloadable), then restart this add-on.
+Alternative with no Core changes: log in manually once on the kiosk; the
+persistent Chromium profile keeps the session across restarts and
+reboots.
+
 ## Boot and reboot behavior
 
 The add-on is designed to survive a host reboot without intervention:
@@ -54,6 +88,11 @@ The add-on is designed to survive a host reboot without intervention:
    section), rotation and screen-timeout fall back to the documented
    defaults (`right`, `0`) and a single background poller re-reads the real
    values when the API recovers.
+
+The add-on also logs the browser's actual open pages (the "address bar"
+contents) at ~30s and ~90s after launch, so display-side issues can be
+diagnosed from the add-on log alone. A healthy boot reports exactly one
+page.
 
 ## Browser Mod, camera popups, and automations
 
