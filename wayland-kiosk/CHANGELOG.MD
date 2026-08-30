@@ -11,6 +11,25 @@
   `docker ps -a` and `docker rm -f` any kiosk container Supervisor no
   longer manages.
 
+## 2026.08.30.1
+- Fix (second attempt, the sed-based one did not hold in the field): tab
+  stacking from crash-session restore. The profile's exit state is now
+  patched with a real JSON edit via python3 (immune to formatting
+  differences that sed missed), `session.restore_on_startup` is pinned to
+  the New Tab page, and the saved tab-session snapshots
+  (`Default/Sessions`) are deleted before every launch -- a kiosk never
+  wants tab restore, and those files are what stacked tabs are rebuilt
+  from. Login cookies and Local Storage (Browser Mod ID) are untouched.
+- New: the add-on now logs the browser's actual open pages (the "address
+  bar" contents) at ~30s and ~90s after launch, via the DevTools target
+  list -- so stacked tabs, redirects, and login pages can be diagnosed
+  from the add-on log without photographing the screen. A healthy boot
+  reports exactly one page.
+- DOCS: added the working `auth_providers` example for trusted_networks
+  auto-login. Provider ORDER matters: `trusted_networks` must be listed
+  before `homeassistant`, or the login screen serves the password form by
+  default and never bypasses. Requires a full Core restart after editing.
+
 ## 2026.08.24.2
 - Boot ordering: run.sh now waits (up to 5 minutes) for `ha_url` to serve
   an HTTP response before launching the browser. At a cold boot, Core is

@@ -398,6 +398,30 @@ wait_for_wayland_socket() {
 export KIOSK_OUTPUT="$ACTIVE_OUTPUT"
 python3 /app/rest_server.py &
 
+# Log what the browser actually has open -- the "address bar" contents --
+# so display-side issues (stacked tabs, unexpected redirects, login pages)
+# can be diagnosed from the add-on log without a photo of the screen.
+# Samples Chromium's DevTools target list at ~30s and ~90s after launch;
+# one healthy kiosk boot shows exactly one page.
+(
+    for wait_s in 30 60; do
+        sleep "$wait_s"
+        curl -s --max-time 3 http://127.0.0.1:9222/json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    targets = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+pages = [t.get('url', '?') for t in targets if t.get('type') == 'page']
+print('Browser reports %d open page(s) (address bar contents):' % len(pages))
+for url in pages:
+    print('  ' + url)
+" | while IFS= read -r line; do
+            bashio::log.info "$line"
+        done || true
+    done
+) &
+
 # Apply output rotation once Cage's Wayland socket actually exists.
 # Spawned unconditionally for the same API-recovery reason as swayidle:
 # if options fell back at boot, rotation looked like "normal" here even
@@ -509,14 +533,38 @@ CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --user-data-dir=/data/chromium-profile"
 # exit_type "Crashed". On the next boot Chromium then RESTORES the previous
 # session's tabs on top of the command-line URL -- accumulating one more
 # tab per restart and breaking out of clean kiosk presentation (visible
-# address bar, the URL stacked in multiple tabs). Standard kiosk fix:
-# rewrite the previous session as cleanly exited before every launch, and
-# suppress the crash-restore machinery via flags.
-CHROMIUM_PREFS="/data/chromium-profile/Default/Preferences"
+# address bar, the URL stacked in multiple tabs).
+#
+# Fix, two layers, both required (an earlier sed-based rewrite of the
+# Preferences file was observed NOT to stop the stacking in the field):
+# 1. Patch the profile's exit state to "clean" with a real JSON edit
+#    (python3, not sed -- immune to formatting differences).
+# 2. Delete the saved tab-session snapshots outright. A kiosk never wants
+#    tab restore, and these files are what Chromium rebuilds stacked tabs
+#    from. Login cookies and site Local Storage (the Browser Mod ID) live
+#    in different files and are untouched.
+CHROMIUM_PROFILE="/data/chromium-profile"
+CHROMIUM_PREFS="${CHROMIUM_PROFILE}/Default/Preferences"
 if [ -f "$CHROMIUM_PREFS" ]; then
-    sed -i 's/"exited_cleanly":false/"exited_cleanly":true/' "$CHROMIUM_PREFS" 2>/dev/null || true
-    sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' "$CHROMIUM_PREFS" 2>/dev/null || true
+    python3 - "$CHROMIUM_PREFS" <<'PYEOF' || bashio::log.warning "Could not rewrite Chromium exit state -- session restore may stack tabs."
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    prefs = json.load(f)
+profile = prefs.setdefault("profile", {})
+profile["exit_type"] = "Normal"
+profile["exited_cleanly"] = True
+# Belt and suspenders: per Chromium's documented RestoreOnStartup values
+# (1 = restore last session, 4 = open a URL list, 5 = open the New Tab
+# page), pin 5 so no restore path has anything to re-open; the kiosk URL
+# comes from the command line regardless.
+session = prefs.setdefault("session", {})
+session["restore_on_startup"] = 5
+with open(path, "w") as f:
+    json.dump(prefs, f)
+PYEOF
 fi
+rm -rf "${CHROMIUM_PROFILE}/Default/Sessions" 2>/dev/null || true
 CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --disable-session-crashed-bubble --hide-crash-restore-bubble"
 
 # Launching the REAL chromium binary at its full path, not `chromium` /
