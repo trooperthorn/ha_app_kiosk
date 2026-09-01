@@ -304,8 +304,9 @@ async def main():
     logging.info("Starting HAOS-Wayland-Kiosk REST API...")
     if not API_TOKEN:
         logging.info(
-            "api_token is not set; the control API remains restricted to "
-            "127.0.0.1 but does not require a Bearer token."
+            "Kiosk control API token (api_token) is not set; the loopback-only "
+            "API does not require a Bearer token. This option is an app-local "
+            "shared secret, not a Home Assistant long-lived access token."
         )
 
     asyncio.create_task(chromium_watchdog())
