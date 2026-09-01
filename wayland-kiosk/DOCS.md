@@ -27,7 +27,7 @@ option works because it appears in the UI.
 | `ha_username` / `ha_password` | applied | Only used when `auth_method: credentials`. |
 | `login_delay` | applied | Seconds to wait for the login page before giving up on auto-login. |
 | `ignore_certificate_errors` | applied | Passes `--ignore-certificate-errors` to Chromium for self-signed HTTPS. |
-| `api_token` | applied | Optional bearer token for the REST control API, which binds to `127.0.0.1:8034`. |
+| `api_token` | applied | Optional app-local bearer token for the kiosk control API on `127.0.0.1:8034`. This is **not** a Home Assistant long-lived access token. |
 | `browser_refresh` | applied | Periodic page refresh interval in seconds. `0` disables periodic refresh. |
 | `ha_sidebar` | not applied yet | Accepted by the schema, read nowhere. Hiding the sidebar is better done with the kiosk-mode frontend plugin inside Home Assistant. |
 | `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
@@ -200,3 +200,15 @@ This add-on spins up a background API server allowing you to control the screen 
 * `display_off`: Powers down the monitor output via `wlr-randr`.
 * `refresh_browser`: Triggers an active reload of the Chromium dashboard.
 * `launch_url`: Uses the Chrome DevTools Protocol to seamlessly navigate to a new page.
+
+The `api_token` option is a shared secret belonging only to this kiosk app.
+Do not paste a Home Assistant long-lived access token into it. When the option
+is set, every control request must contain:
+
+```text
+Authorization: Bearer <your kiosk control API token>
+```
+
+Because the API listens only on loopback, it cannot be reached directly from
+the LAN. With `host_network: true`, Home Assistant Core and other host-local
+processes can reach it.
