@@ -5,7 +5,8 @@
 ## 2026.09.01.3
 - Add the Mesa Gallium VA-API driver so AMD systems can hardware-decode
   Home Assistant camera streams through Chromium instead of falling back to
-  CPU decoding.
+  CPU decoding. Startup now probes the render node with `vainfo` and logs
+  the detected driver or an explicit CPU-fallback warning.
 - Rename and document `api_token` in the UI as the kiosk control API token.
   It is an app-local shared secret, not a Home Assistant long-lived access
   token, and is now rendered as a password field.
