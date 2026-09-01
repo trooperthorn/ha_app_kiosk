@@ -1,5 +1,4 @@
 diff --git a/output.c b/output.c
-index 9f2a708..0000000 100644
 --- a/output.c
 +++ b/output.c
 @@ -291,6 +291,7 @@ handle_new_output(struct wl_listener *listener, void *data)
@@ -11,7 +10,6 @@ index 9f2a708..0000000 100644
  	view_position_all(output->server);
  	update_output_manager_config(output->server);
 diff --git a/seat.c b/seat.c
-index 5f659a4..0000000 100644
 --- a/seat.c
 +++ b/seat.c
 @@ -145,6 +145,40 @@ map_input_device_to_output(struct cg_seat *seat, struct wlr_input_device *device
@@ -56,7 +54,6 @@ index 5f659a4..0000000 100644
  handle_touch_destroy(struct wl_listener *listener, void *data)
  {
 diff --git a/seat.h b/seat.h
-index 4b7bfda..0000000 100644
 --- a/seat.h
 +++ b/seat.h
 @@ -14,6 +14,7 @@
