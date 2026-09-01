@@ -2,6 +2,12 @@
 ## KNOWN ISSUES
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
 
+## 2026.09.01.4
+- Fix: prevent Chromium watchdog false-positive restarts. CDP commands are
+  serialized, renderer checks have a 15-second deadline, a page reload is
+  attempted before restart, and a final 30-second probe must also fail before
+  Cage is terminated. Expected CDP timeouts no longer dump tracebacks.
+
 ## 2026.09.01.3
 - Add the Mesa Gallium VA-API driver so AMD systems can hardware-decode
   Home Assistant camera streams through Chromium instead of falling back to
