@@ -5,11 +5,20 @@ import asyncio
 import urllib.request
 import json
 from typing import Any, Dict, Optional
-from aiohttp import ClientSession, WSMsgType, web
+from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 # Type alias for your payload
 Payload = Dict[str, Any]
 SHORT_TIMEOUT = 5
+WATCHDOG_RENDERER_TIMEOUT = 15
+WATCHDOG_FINAL_TIMEOUT = 30
+WATCHDOG_FAILURE_LIMIT = 3
+WATCHDOG_INTERVAL = 30
+
+# Serialize page-target CDP sessions. API-triggered reload/navigation commands
+# and the watchdog previously opened competing target WebSockets, which could
+# make a healthy but busy renderer miss the watchdog's five-second deadline.
+CDP_LOCK = asyncio.Lock()
 
 # The output the display_on/display_off endpoints act on. wlr-randr has NO
 # wildcard support ("--output *" fails with "unknown output *" -- an earlier
@@ -115,63 +124,127 @@ async def start_background_command(cmd_list, log_prefix=""):
         return {"success": False, "error": str(exc)}
 
 
-async def cdp_page_command(method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Send a command to the first Chromium page target over CDP."""
+async def cdp_page_command(
+    method: str,
+    params: Optional[Dict[str, Any]] = None,
+    timeout: float = SHORT_TIMEOUT,
+    log_failure: bool = True,
+) -> Dict[str, Any]:
+    """Send one serialized command to the first Chromium page target."""
     try:
-        def _targets():
-            with urllib.request.urlopen("http://127.0.0.1:9222/json", timeout=5) as response:
-                return json.loads(response.read())
+        async with CDP_LOCK:
+            def _targets():
+                with urllib.request.urlopen(
+                    "http://127.0.0.1:9222/json",
+                    timeout=min(timeout, SHORT_TIMEOUT),
+                ) as response:
+                    return json.loads(response.read())
 
-        targets = await asyncio.to_thread(_targets)
-        page = next((target for target in targets if target.get("type") == "page"), None)
-        if not page or not page.get("webSocketDebuggerUrl"):
-            return {"success": False, "error": "No Chromium page target found"}
+            targets = await asyncio.to_thread(_targets)
+            page = next((target for target in targets if target.get("type") == "page"), None)
+            if not page or not page.get("webSocketDebuggerUrl"):
+                return {"success": False, "error": "No Chromium page target found"}
 
-        async with ClientSession() as session:
-            async with session.ws_connect(page["webSocketDebuggerUrl"], receive_timeout=5) as ws:
-                await ws.send_json({"id": 1, "method": method, "params": params or {}})
-                async for message in ws:
-                    if message.type == WSMsgType.TEXT:
-                        response = json.loads(message.data)
-                        if response.get("id") != 1:
-                            continue
-                        if "error" in response:
-                            return {"success": False, "error": response["error"]}
-                        return {"success": True, "result": response.get("result", {})}
-                    if message.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
-                        break
-        return {"success": False, "error": "Chromium closed the CDP connection"}
+            client_timeout = ClientTimeout(total=timeout + SHORT_TIMEOUT)
+            async with ClientSession(timeout=client_timeout) as session:
+                async with session.ws_connect(
+                    page["webSocketDebuggerUrl"],
+                    receive_timeout=timeout,
+                ) as ws:
+                    await ws.send_json({"id": 1, "method": method, "params": params or {}})
+                    async for message in ws:
+                        if message.type == WSMsgType.TEXT:
+                            response = json.loads(message.data)
+                            if response.get("id") != 1:
+                                continue
+                            if "error" in response:
+                                return {"success": False, "error": response["error"]}
+                            return {"success": True, "result": response.get("result", {})}
+                        if message.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
+                            break
+            return {"success": False, "error": "Chromium closed the CDP connection"}
+    except TimeoutError:
+        error = f"CDP command {method} timed out after {timeout:g}s"
+        if log_failure:
+            logging.warning(error)
+        return {"success": False, "error": error, "timed_out": True}
     except Exception as exc:
-        logging.exception("CDP command %s failed", method)
+        if log_failure:
+            logging.exception("CDP command %s failed", method)
         return {"success": False, "error": str(exc)}
 
 
 # CHROME WATCHDOG
 async def chromium_watchdog():
-    """Verify both Chromium's browser process and its page renderer."""
+    """Recover a persistently frozen page without killing a busy renderer."""
     failures = 0
     await asyncio.sleep(20)  # give Chromium time to finish its initial boot
 
     while True:
-        try:
-            result = await cdp_page_command(
-                "Runtime.evaluate",
-                {"expression": "1", "returnByValue": True},
-            )
-            if not result["success"]:
-                raise RuntimeError(result.get("error", "renderer did not respond"))
+        result = await cdp_page_command(
+            "Runtime.evaluate",
+            {"expression": "1", "returnByValue": True},
+            timeout=WATCHDOG_RENDERER_TIMEOUT,
+            log_failure=False,
+        )
+
+        if result["success"]:
+            if failures:
+                logging.info("Watchdog: Chromium renderer recovered.")
             failures = 0
-
-        except Exception:
+        else:
             failures += 1
-            logging.warning("Watchdog: Chromium unresponsive (%d/3).", failures)
+            logging.warning(
+                "Watchdog: Chromium renderer unresponsive (%d/%d): %s",
+                failures,
+                WATCHDOG_FAILURE_LIMIT,
+                result.get("error", "unknown CDP failure"),
+            )
 
-            if failures >= 3:
-                logging.error("Watchdog: Chromium is frozen! Forcing container restart.")
-                await execute_command(["killall", "cage"], log_prefix="watchdog", allow_command=True)
-                break
+            # A reload is less disruptive than restarting Cage and the whole
+            # container. If the old renderer has crashed, Chromium can create a
+            # fresh one while preserving the kiosk profile and login session.
+            if failures == WATCHDOG_FAILURE_LIMIT - 1:
+                reload_result = await cdp_page_command(
+                    "Page.reload",
+                    {"ignoreCache": False},
+                    timeout=WATCHDOG_RENDERER_TIMEOUT,
+                    log_failure=False,
+                )
+                if reload_result["success"]:
+                    logging.warning(
+                        "Watchdog: requested a page reload before considering restart."
+                    )
 
-        await asyncio.sleep(30)
+            if failures >= WATCHDOG_FAILURE_LIMIT:
+                # One longer confirmation prevents a transiently busy dashboard
+                # or camera decoder from being mistaken for a permanent freeze.
+                final_result = await cdp_page_command(
+                    "Runtime.evaluate",
+                    {"expression": "1", "returnByValue": True},
+                    timeout=WATCHDOG_FINAL_TIMEOUT,
+                    log_failure=False,
+                )
+                if final_result["success"]:
+                    logging.info(
+                        "Watchdog: renderer responded during final confirmation; "
+                        "container restart cancelled."
+                    )
+                    failures = 0
+                else:
+                    logging.error(
+                        "Watchdog: renderer failed final %ds confirmation; "
+                        "forcing container restart.",
+                        WATCHDOG_FINAL_TIMEOUT,
+                    )
+                    await execute_command(
+                        ["killall", "cage"],
+                        log_prefix="watchdog",
+                        allow_command=True,
+                    )
+                    break
+
+        await asyncio.sleep(WATCHDOG_INTERVAL)
 
 # --------------------------------------------------------------------------- #
 # WAYLAND API ENDPOINTS
