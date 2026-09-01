@@ -2,6 +2,11 @@
 ## KNOWN ISSUES
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
 
+## 2026.09.01.2
+- Fix: remove accidental zero destination blob IDs from the bundled Cage
+  patch. GNU `patch` interpreted those Git metadata lines as file deletions,
+  applied the hunks, then exited with status 1 before Meson could run.
+
 ## 2026.09.01.1
 - Fix: load validated add-on options directly from `/data/options.json`.
   Startup no longer calls the Supervisor options API, receives repeated
