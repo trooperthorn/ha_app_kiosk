@@ -12,6 +12,9 @@ RUN apk add --no-cache \
     mesa-egl \
     mesa-gl \
     mesa-gles \
+    # Provides radeonsi_drv_video.so so Chromium can use the AMD GPU for
+    # H.264/VP8/VP9 camera-stream decoding instead of falling back to CPU.
+    mesa-va-gallium \
     seatd \
     wayland \
     font-noto \
