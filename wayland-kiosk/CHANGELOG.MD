@@ -10,6 +10,10 @@
 - Rename and document `api_token` in the UI as the kiosk control API token.
   It is an app-local shared secret, not a Home Assistant long-lived access
   token, and is now rendered as a password field.
+- Harden the Chromium watchdog against false-positive restarts. CDP commands
+  are serialized, renderer checks have a 15-second deadline, a page reload
+  is attempted before restart, and a final 30-second probe must also fail
+  before Cage is terminated. Expected CDP timeouts no longer dump tracebacks.
 
 ## 2026.09.01.2
 - Fix: remove accidental zero destination blob IDs from the bundled Cage
