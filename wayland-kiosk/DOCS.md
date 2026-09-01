@@ -81,9 +81,11 @@ The add-on is designed to survive a host reboot without intervention:
    then starts the add-on at every boot (`startup: application` orders it
    after Home Assistant Core is launched).
 2. Enable the **Watchdog** toggle as well. rest_server.py monitors Chromium
-   through the DevTools endpoint and deliberately kills the compositor if
-   Chromium freezes; the container then exits and Supervisor's watchdog is
-   what restarts it. Without the toggle, a frozen kiosk stays dead.
+   through the DevTools endpoint. A failed renderer check gets a page-reload
+   recovery attempt, and Cage is terminated only after three consecutive
+   15-second failures plus a final 30-second confirmation. The container then
+   exits and Supervisor's watchdog restarts it. Without the toggle, a genuinely
+   frozen kiosk stays stopped after that recovery path is exhausted.
 3. At a cold boot, Core is often launched but not yet serving HTTP when this
    add-on starts. run.sh waits (up to 5 minutes) for an HTTP response from
    `ha_url` before starting the browser, because Chromium never retries a
