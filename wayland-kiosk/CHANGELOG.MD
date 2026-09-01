@@ -1,15 +1,28 @@
 # Changelog
 ## KNOWN ISSUES
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
-- Locally-installed add-on can end up with a stale Supervisor
-  registration/token (constant "Unable to access the API, forbidden") after
-  the add-on's slug changes, until it's fully uninstalled and reinstalled.
-  Supervisor-side, not fixable from this repo. An orphaned container from a
-  previous install (e.g. one named `addon_app_kiosk` without the
-  `addon_<repohash>_` / `addon_local_` prefix Supervisor uses today) can
-  keep producing "Invalid token" errors and confuse debugging -- check
-  `docker ps -a` and `docker rm -f` any kiosk container Supervisor no
-  longer manages.
+
+## 2026.09.01.1
+- Fix: load validated add-on options directly from `/data/options.json`.
+  Startup no longer calls the Supervisor options API, receives repeated
+  403 responses, loses non-default settings, or waits five minutes before
+  applying rotation.
+- Fix: apply the output transform from Cage's launcher before Chromium
+  creates its Wayland surface. This avoids the delayed landscape-to-portrait
+  resize which coincided with a renderer SIGTRAP in field testing.
+- Fix: Chromium now launches with `--app=<url>`, `--kiosk`, and
+  `--start-fullscreen`. App mode removes the tab strip and address bar even
+  when Chromium's early Wayland fullscreen request remains maximized.
+- Fix: build a pinned Cage 0.3.1 with a small compositor patch which maps
+  input devices lacking a `WL_OUTPUT` property to the auto-discovered DRM
+  connector. This fixes ILITEK touch panels logging `cannot be mapped to an
+  output device` and allows output rotation to transform touch coordinates.
+- Fix: the REST server now starts with the compositor's `WAYLAND_DISPLAY`,
+  `launch_url` actually navigates through CDP, and `display_on` no longer
+  waits on a long-running swayidle process until timeout.
+- Implemented the previously inert `browser_refresh` option.
+- Added per-architecture build bases and documented the trusted-proxy versus
+  trusted-networks loopback conflict discovered during authentication tests.
 
 ## 2026.08.30.1
 - Fix (second attempt, the sed-based one did not hold in the field): tab

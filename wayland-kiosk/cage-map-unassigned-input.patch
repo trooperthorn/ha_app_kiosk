@@ -1,0 +1,76 @@
+diff --git a/output.c b/output.c
+index 9f2a708..0000000 100644
+--- a/output.c
++++ b/output.c
+@@ -291,6 +291,7 @@ handle_new_output(struct wl_listener *listener, void *data)
+ 	if (wlr_output_commit_state(wlr_output, &state)) {
+ 		output_layout_add_auto(output);
+ 	}
++	seat_map_input_devices_to_output(server->seat, wlr_output);
+ 
+ 	view_position_all(output->server);
+ 	update_output_manager_config(output->server);
+diff --git a/seat.c b/seat.c
+index 5f659a4..0000000 100644
+--- a/seat.c
++++ b/seat.c
+@@ -145,6 +145,40 @@ map_input_device_to_output(struct cg_seat *seat, struct wlr_input_device *device
+ 	wlr_log(WLR_INFO, "Couldn't map input device %s to an output\n", device->name);
+ }
+ 
++void
++seat_map_input_devices_to_output(struct cg_seat *seat, struct wlr_output *output)
++{
++	const char *configured_output = getenv("CAGE_TOUCH_OUTPUT");
++	bool is_configured_output = configured_output != NULL && configured_output[0] != '\0';
++	if (is_configured_output && strcmp(configured_output, output->name) != 0) {
++		return;
++	}
++
++	/* Without an explicit target, only fall back when exactly one output is
++	 * present. This keeps upstream's safe behavior on multi-display systems. */
++	bool allow_unassigned = is_configured_output || wl_list_length(&seat->server->outputs) == 1;
++
++	struct cg_touch *touch;
++	wl_list_for_each (touch, &seat->touch, link) {
++		const char *output_name = touch->touch->output_name;
++		if ((output_name && strcmp(output_name, output->name) == 0) || (!output_name && allow_unassigned)) {
++			wlr_log(WLR_INFO, "Mapping touch input device %s to output device %s\n",
++				touch->touch->base.name, output->name);
++			wlr_cursor_map_input_to_output(seat->cursor, &touch->touch->base, output);
++		}
++	}
++
++	struct cg_pointer *pointer;
++	wl_list_for_each (pointer, &seat->pointers, link) {
++		const char *output_name = pointer->pointer->output_name;
++		if ((output_name && strcmp(output_name, output->name) == 0) || (!output_name && allow_unassigned)) {
++			wlr_log(WLR_INFO, "Mapping pointer input device %s to output device %s\n",
++				pointer->pointer->base.name, output->name);
++			wlr_cursor_map_input_to_output(seat->cursor, &pointer->pointer->base, output);
++		}
++	}
++}
++
+ static void
+ handle_touch_destroy(struct wl_listener *listener, void *data)
+ {
+diff --git a/seat.h b/seat.h
+index 4b7bfda..0000000 100644
+--- a/seat.h
++++ b/seat.h
+@@ -14,6 +14,7 @@
+ #define DEFAULT_XCURSOR "left_ptr"
+ #define XCURSOR_SIZE 24
+ 
++struct wlr_output;
+ struct cg_seat {
+ 	struct wlr_seat *seat;
+ 	struct cg_server *server;
+@@ -90,5 +91,6 @@ struct cg_drag_icon {
+ struct cg_seat *seat_create(struct cg_server *server, struct wlr_backend *backend);
+ void seat_destroy(struct cg_seat *seat);
++void seat_map_input_devices_to_output(struct cg_seat *seat, struct wlr_output *output);
+ struct cg_view *seat_get_focus(struct cg_seat *seat);
+ void seat_set_focus(struct cg_seat *seat, struct cg_view *view);
+ void seat_center_cursor(struct cg_seat *seat);

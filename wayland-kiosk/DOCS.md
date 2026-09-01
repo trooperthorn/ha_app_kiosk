@@ -21,14 +21,14 @@ option works because it appears in the UI.
 |---|---|---|
 | `ha_url` | applied | URL the kiosk loads. Default `http://127.0.0.1:8123` (requires `host_network`). |
 | `ha_dashboard` | applied | Appended to `ha_url` as a path. Default `lovelace`, which is Home Assistant's Overview dashboard. |
-| `rotate_display` | applied | Output transform via `wlr-randr`: `normal`, `right` (270), `inverted` (180), `left` (90). Touch rotates with the output automatically under wlroots. Default `right`; the script fallback matches, so a Supervisor API outage cannot silently un-rotate the display. |
+| `rotate_display` | applied | Output transform via `wlr-randr`: `normal`, `right` (270), `inverted` (180), `left` (90). Rotation is applied before Chromium launches. Unassigned touch devices are mapped to the discovered output by the bundled Cage patch. |
 | `screen_timeout` | applied | Seconds of idle before the output powers off via swayidle. `0` disables blanking (default). Fallback also `0`. |
 | `auth_method` | applied | `trusted_networks` (default, needs Core-side configuration, see below), `credentials` (types the login form once via wtype), or `none`. |
 | `ha_username` / `ha_password` | applied | Only used when `auth_method: credentials`. |
 | `login_delay` | applied | Seconds to wait for the login page before giving up on auto-login. |
 | `ignore_certificate_errors` | applied | Passes `--ignore-certificate-errors` to Chromium for self-signed HTTPS. |
-| `api_token` | applied | Bearer token required by the local REST control API (rest_server.py). Leave blank to run it unauthenticated (not recommended). |
-| `browser_refresh` | not applied yet | Accepted by the schema, read nowhere. Intended as a periodic page refresh interval; not implemented. |
+| `api_token` | applied | Optional bearer token for the REST control API, which binds to `127.0.0.1:8034`. |
+| `browser_refresh` | applied | Periodic page refresh interval in seconds. `0` disables periodic refresh. |
 | `ha_sidebar` | not applied yet | Accepted by the schema, read nowhere. Hiding the sidebar is better done with the kiosk-mode frontend plugin inside Home Assistant. |
 | `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
 | `dark_mode` | not applied yet | Accepted by the schema, read nowhere. Set dark mode per-user in Home Assistant instead. |
@@ -67,6 +67,12 @@ Alternative with no Core changes: log in manually once on the kiosk; the
 persistent Chromium profile keeps the session across restarts and
 reboots.
 
+Do not list `127.0.0.1` or `::1` as an HTTP `trusted_proxy` for this
+configuration. Home Assistant excludes trusted-proxy addresses from the
+trusted-networks authentication provider. If the Network settings UI
+requires at least one proxy entry even though `use_x_forwarded_for` is off,
+use an unused documentation address such as `192.0.2.1/32` instead.
+
 ## Boot and reboot behavior
 
 The add-on is designed to survive a host reboot without intervention:
@@ -83,11 +89,13 @@ The add-on is designed to survive a host reboot without intervention:
    `ha_url` before starting the browser, because Chromium never retries a
    failed connection on its own. The screen stays black during that wait
    instead of parking on a dead "connection refused" page.
-4. If the Supervisor API rejects the add-on's token during the startup
-   window (a recurring Supervisor-side issue, see the troubleshooting
-   section), rotation and screen-timeout fall back to the documented
-   defaults (`right`, `0`) and a single background poller re-reads the real
-   values when the API recovers.
+4. Add-on options are read directly from `/data/options.json`; kiosk startup
+   no longer depends on the Supervisor HTTP API or waits through a 403 retry
+   loop.
+5. Cage starts a small launcher first. It rotates the output before creating
+   Chromium's surface, then starts Chromium with `--app`, `--kiosk`, and
+   `--start-fullscreen`. App mode removes tabs and the address bar even if a
+   Wayland fullscreen request is left in the maximized state.
 
 The add-on also logs the browser's actual open pages (the "address bar"
 contents) at ~30s and ~90s after launch, so display-side issues can be
@@ -158,49 +166,32 @@ Do NOT set `apparmor: false`: it was once tried against this same crash,
 does not affect device cgroup grants, and only strips the add-on's
 security confinement.
 
-## Touch rotation needs no udev calibration
+## Touchscreen mapping and rotation
 
-wlroots (Cage's backend) maps touchscreens to the output and applies the
-output's transform to touch coordinates, so `wlr-randr --transform`
-rotates the display and touch input together. A previous version wrote a
-`LIBINPUT_CALIBRATION_MATRIX` udev rule and ran `udevadm control` /
-`trigger`; that mechanism cannot work inside an add-on -- `udev: true`
-bind-mounts the **host's** `/run/udev` read-only, so container-written
-rules are invisible to the host's udevd and `udevadm control` just hangs
-against the host daemon's socket.
+wlroots applies an output transform to touch coordinates only after the
+touch device is mapped to that output. USB panels such as the ILITEK device
+often provide no `WL_OUTPUT` udev property, causing stock Cage to log
+`cannot be mapped to an output device` and leave the coordinates
+untransformed.
+
+The add-on builds Cage with a narrow patch: run.sh discovers the connected
+DRM connector and exports it as `CAGE_TOUCH_OUTPUT`; when that connector is
+initialized, Cage maps touch and absolute-pointer interfaces which lack an
+output assignment to it. Explicit device-to-output assignments are still
+honored, and the automatic fallback is limited to the selected connector.
+
+This is done in the compositor because `udev: true` bind-mounts Home
+Assistant OS's `/run/udev` database read-only. Rules written inside the
+container are invisible to the host's udev daemon, and attempting to reload
+them from the add-on can hang.
 
 ## If `rotate_display` (or any other option) never takes effect
 
-Check the add-on log for repeated `Unable to access the API, forbidden` /
-`Failed to get addon config from Supervisor API` lines. If that only
-happens once or twice at boot, it's a known transient Supervisor race
-(home-assistant/supervisor#1930) and resolves itself. If it happens for
-the *entire* run, every option falls back to its script default. Since
-2026.08.24.x those fallbacks mirror the documented defaults (`right`
-rotation, screen timeout `0`, `trusted_networks`), so an outage no longer
-changes behavior away from the defaults -- but any NON-default values you
-configured (a different dashboard, `credentials` auth, a custom URL) still
-cannot be read until the API recovers. A background poller retries for
-about 5 minutes and applies rotation and screen-timeout late if the API
-comes back.
-
-This add-on's slug changed from `haos_wayland_kiosk` to `app_kiosk` on
-2026-08-13. If you had it installed under the old slug, Supervisor can be
-left serving requests against a stale registration/token after an
-in-place update. Fix: fully **uninstall** the add-on, then reinstall it
-(not just rebuild/restart) so Supervisor issues a fresh registration for
-the current slug.
-
-If the errors survive even a full uninstall/reinstall, look for an
-**orphaned container** from an earlier install: Supervisor names managed
-containers `addon_local_app_kiosk` (local install) or
-`addon_<8-hex-hash>_app_kiosk` (git repository install). Run
-`docker ps -a | grep -i kiosk` on the host -- any kiosk container with a
-different name (for example a bare `addon_app_kiosk`, or one named for
-the old `haos_wayland_kiosk` slug) is a leftover Supervisor no longer
-manages. Its baked-in token can never validate again ("Invalid token" in
-the Supervisor log) and it may restart itself at boot via Docker's
-restart policy. Remove it: `docker rm -f <name>`.
+The startup log should contain `Loaded add-on configuration from
+/data/options.json` followed by the final kiosk URL and rotation transform.
+If the file is missing or invalid, the add-on logs a warning and uses the
+documented defaults. Supervisor API/token health no longer affects option
+loading.
 
 ## REST API Server
 

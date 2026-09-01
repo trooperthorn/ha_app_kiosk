@@ -1,6 +1,6 @@
 name: "HAOS Wayland Kiosk"
 description: "Wayland-native kiosk dashboard using Cage and Chromium"
-version: "2026.08.30.2"
+version: "2026.09.01.1"
 slug: "app_kiosk"
 init: false
 startup: application
@@ -12,7 +12,6 @@ url: "https://github.com/trooperthorn/ha_app_kiosk/"
 # just be the container's own loopback). It's also what makes the
 # trusted_networks auth provider trivially trust this add-on's requests.
 host_network: true
-hassio_api: true
 
 arch:
   - aarch64
@@ -99,8 +98,7 @@ options:
   auth_method: "trusted_networks"
   ha_username: ""
   ha_password: ""
-  # Shared secret required by rest_server.py's control API. Leave blank to
-  # disable the check (not recommended) -- see rest_server.py comments.
+  # Optional shared secret for rest_server.py's loopback-only control API.
   api_token: ""
 
 # --- Enforced UI Schema ---
