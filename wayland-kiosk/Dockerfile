@@ -1,7 +1,9 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM ${BUILD_FROM}
 
-# Install Cage, Chromium, Wayland tools, and Python environment
+# Install Cage, Chromium, Wayland tools, and Python environment.
+# mesa-va-gallium supplies radeonsi_drv_video.so so Chromium can decode
+# AMD-accelerated H.264/VP8/VP9 camera streams instead of falling back to CPU.
 # curl added: run.sh polls Chromium's CDP endpoint (http://localhost:9222/json)
 # to detect the HA login page before typing credentials.
 RUN apk add --no-cache \
@@ -12,8 +14,6 @@ RUN apk add --no-cache \
     mesa-egl \
     mesa-gl \
     mesa-gles \
-    # Provides radeonsi_drv_video.so so Chromium can use the AMD GPU for
-    # H.264/VP8/VP9 camera-stream decoding instead of falling back to CPU.
     mesa-va-gallium \
     seatd \
     wayland \
