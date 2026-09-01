@@ -140,6 +140,13 @@ dismisses itself after `timeout` milliseconds. The same mechanism covers
 scripts (`action: browser_mod.popup` inside any script) and navigation
 (`browser_mod.navigate` to send the kiosk to another dashboard).
 
+On AMD systems, the image includes Mesa's Gallium VA-API backend so Chromium
+can decode supported camera video formats on the GPU. At startup the add-on
+tests `/dev/dri/renderD128` with `vainfo`. A healthy AMD host logs
+`VA-API hardware video decoding available` followed by the Mesa driver
+name. A probe failure is non-fatal, but means video decoding will use CPU
+until the DRM permissions or driver are corrected.
+
 ## Device access: how it works and how it broke
 
 Supervisor grants an add-on hardware access by resolving every entry in
