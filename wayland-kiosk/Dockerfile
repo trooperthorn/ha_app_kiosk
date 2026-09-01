@@ -4,6 +4,7 @@ FROM ${BUILD_FROM}
 # Install Cage, Chromium, Wayland tools, and Python environment.
 # mesa-va-gallium supplies radeonsi_drv_video.so so Chromium can decode
 # AMD-accelerated H.264/VP8/VP9 camera streams instead of falling back to CPU.
+# libva-utils supplies vainfo for a concise startup capability probe.
 # curl added: run.sh polls Chromium's CDP endpoint (http://localhost:9222/json)
 # to detect the HA login page before typing credentials.
 RUN apk add --no-cache \
@@ -15,6 +16,7 @@ RUN apk add --no-cache \
     mesa-gl \
     mesa-gles \
     mesa-va-gallium \
+    libva-utils \
     seatd \
     wayland \
     font-noto \
