@@ -81,87 +81,64 @@ export WLR_BACKEND=drm
 # bug in this add-on.
 
 # ---------------------------------------------------------
-# WAIT FOR SUPERVISOR API TO BE READY
+# READ UI OPTIONS LOCALLY
 # ---------------------------------------------------------
-# bashio::config talks to the Supervisor API (/addons/self/options/config).
-# Right after an add-on rebuild/restart, this call can transiently return
-# 403 Forbidden while Supervisor finishes registering the new container
-# instance -- a known, previously-reported Supervisor-side issue (see
-# home-assistant/supervisor#1930 and #4111), not something this add-on can
-# fully prevent. When it happens, EVERY bashio::config call fails at once,
-# so every option below falls back to its script-level default -- including
-# rotate_display -- which can look like a rotation bug but isn't. Retry a
-# canary read a few times with backoff before accepting the fallback path;
-# this resolves the common transient case automatically.
-SUPERVISOR_READY=0
-for attempt in $(seq 1 5); do
-    canary=$(bashio::config 'ha_url' 2>/dev/null || true)
-    if [ -n "$canary" ] && [ "$canary" != "null" ]; then
-        SUPERVISOR_READY=1
-        break
-    fi
-    bashio::log.warning "Supervisor API not ready yet (attempt ${attempt}/5), retrying in 2s..."
-    sleep 2
-done
+# Supervisor writes the validated add-on options to /data/options.json before
+# starting the container. Reading that file avoids the /addons/self API race
+# which returned 403 at boot and silently discarded every configured value.
+OPTIONS_FILE="/data/options.json"
 
-if [ "$SUPERVISOR_READY" -eq 0 ]; then
-    bashio::log.error "Supervisor API did not respond after 5 attempts. Options will fall back to script defaults for now -- but the rotation and screen-timeout tasks will keep polling and pick up the real values if the API recovers within ~5 minutes. If the API never recovers for an entire run: one-off -> known transient Supervisor issue (home-assistant/supervisor#1930), try 'ha supervisor restart' then restart this add-on; every run -> likely a stale add-on registration/token (this add-on's slug changed from haos_wayland_kiosk to app_kiosk), which needs a full UNINSTALL + reinstall so Supervisor issues a fresh token."
+read_option() {
+    local key="$1"
+    local fallback="$2"
+    python3 - "$OPTIONS_FILE" "$key" "$fallback" <<'PYEOF'
+import json
+import sys
+
+path, key, fallback = sys.argv[1:4]
+try:
+    with open(path, encoding="utf-8") as options_file:
+        value = json.load(options_file).get(key, fallback)
+except Exception:
+    value = fallback
+
+if value is None:
+    value = fallback
+if isinstance(value, bool):
+    print("true" if value else "false")
+else:
+    print(value)
+PYEOF
+}
+
+if python3 -m json.tool "$OPTIONS_FILE" >/dev/null 2>&1; then
+    bashio::log.info "Loaded add-on configuration from ${OPTIONS_FILE}."
+else
+    bashio::log.warning "${OPTIONS_FILE} is missing or invalid; documented defaults will be used."
 fi
 
-# ---------------------------------------------------------
-# READ UI OPTIONS (WITH FALLBACKS)
-# ---------------------------------------------------------
-# Reuse the canary read above instead of fetching ha_url a second time.
-URL="$canary"
-ROTATION_CONFIG=$(bashio::config 'rotate_display')
-SCREEN_TIMEOUT=$(bashio::config 'screen_timeout')
-AUTH_METHOD=$(bashio::config 'auth_method')
-HA_USERNAME=$(bashio::config 'ha_username')
-HA_PASSWORD=$(bashio::config 'ha_password')
-LOGIN_DELAY=$(bashio::config 'login_delay')
-HA_DASHBOARD=$(bashio::config 'ha_dashboard')
-
-if [ -z "$URL" ] || [ "$URL" == "null" ]; then
-    URL="http://127.0.0.1:8123"
-    bashio::log.warning "HA API returned blank URL. Forcing default to http://127.0.0.1:8123"
-fi
+URL=$(read_option 'ha_url' 'http://127.0.0.1:8123')
+HA_DASHBOARD=$(read_option 'ha_dashboard' 'lovelace')
+BROWSER_REFRESH=$(read_option 'browser_refresh' '12000')
+ROTATION_CONFIG=$(read_option 'rotate_display' 'right')
+SCREEN_TIMEOUT=$(read_option 'screen_timeout' '0')
+AUTH_METHOD=$(read_option 'auth_method' 'trusted_networks')
+HA_USERNAME=$(read_option 'ha_username' '')
+HA_PASSWORD=$(read_option 'ha_password' '')
+LOGIN_DELAY=$(read_option 'login_delay' '10')
+IGNORE_CERTIFICATE_ERRORS=$(read_option 'ignore_certificate_errors' 'true')
 
 # Append the dashboard path so the kiosk lands on the configured dashboard
 # (the default "lovelace" is Home Assistant's Overview page) instead of
-# whatever Core decides to serve at the bare URL. This option existed in
-# the configuration schema before but was never applied. When the API is
-# down, HA_DASHBOARD stays empty and the bare URL is used, which still
-# lands on the default dashboard after login.
-if [ -n "$HA_DASHBOARD" ] && [ "$HA_DASHBOARD" != "null" ]; then
-    URL="${URL%/}/${HA_DASHBOARD#/}"
-    bashio::log.info "Dashboard path applied -- kiosk will load: ${URL}"
+# whatever Core decides to serve at the bare URL.
+if [ -n "$HA_DASHBOARD" ]; then
+    dashboard_path="${HA_DASHBOARD#/}"
+    case "${URL%/}" in
+        */"$dashboard_path") ;;
+        *) URL="${URL%/}/${dashboard_path}" ;;
+    esac
 fi
-
-if [ -z "$SCREEN_TIMEOUT" ] || [ "$SCREEN_TIMEOUT" == "null" ]; then
-    # 0 (disabled) is this add-on's actual default (config.yaml's
-    # options.screen_timeout) -- same principle as the rotate_display
-    # fallback below: an API outage must not change documented behavior.
-    # The old fallback of 600 made the screen start blanking after 10
-    # minutes on any boot where the API was down.
-    SCREEN_TIMEOUT=0
-    bashio::log.warning "Could not read screen_timeout. Falling back to the add-on default: 0 (disabled)."
-fi
-
-if [ -z "$ROTATION_CONFIG" ] || [ "$ROTATION_CONFIG" == "null" ]; then
-    # "right" is this kiosk's actual default (matches config.yaml's
-    # options.rotate_display) -- NOT "normal". A boot-time Supervisor API
-    # outage otherwise silently reverted rotation to normal every time,
-    # which is exactly the failure mode this add-on has hit repeatedly.
-    ROTATION_CONFIG="right"
-fi
-
-if [ -z "$AUTH_METHOD" ] || [ "$AUTH_METHOD" == "null" ]; then
-    AUTH_METHOD="trusted_networks"
-fi
-
-if [ -z "$LOGIN_DELAY" ] || [ "$LOGIN_DELAY" == "null" ]; then
-    LOGIN_DELAY=10
-fi
+bashio::log.info "Kiosk will load: ${URL}"
 
 # ---------------------------------------------------------
 # DYNAMIC HARDWARE DISCOVERY (Display & Touch)
@@ -216,10 +193,11 @@ fi
 # ---------------------------------------------------------
 # ROTATION
 # ---------------------------------------------------------
-# Touch input needs NO separate calibration here. wlroots (Cage's backend)
-# maps touchscreens to the output and applies the output's transform to
-# touch coordinates, so `wlr-randr --transform` below rotates display and
-# touch together.
+# wlroots applies the output transform to touch coordinates only after the
+# input device is mapped to that output. Many USB panels (including ILITEK)
+# do not expose a WL_OUTPUT udev property, and Cage otherwise logs that the
+# device cannot be mapped. The image contains a small Cage patch which maps
+# unassigned input devices to CAGE_TOUCH_OUTPUT once that connector appears.
 #
 # A previous version tried to write a udev rule setting
 # LIBINPUT_CALIBRATION_MATRIX / WL_OUTPUT and reload udev. That mechanism
@@ -229,8 +207,8 @@ fi
 # container's /etc/udev/rules.d/ is invisible to the host's udevd, and
 # `udevadm control --reload-rules` in here just hangs trying to reach the
 # host daemon's control socket (the "Terminated timeout 5 udevadm" log
-# line). If a specific panel ever needs a hand-tuned matrix, that has to
-# happen through the compositor or on the host -- not via container udev.
+# line). CAGE_TOUCH_OUTPUT supplies the same mapping at the compositor layer
+# without attempting to modify Home Assistant OS's host udev database.
 rotation_to_transform() {
     case "$1" in
         "right")    echo "270" ;;
@@ -242,71 +220,8 @@ rotation_to_transform() {
 
 ROTATION_DEGREES=$(rotation_to_transform "$ROTATION_CONFIG")
 
-bashio::log.info "Rotation config '$ROTATION_CONFIG' -> output transform $ROTATION_DEGREES (touch follows the output transform automatically under wlroots)"
-
-# The Supervisor API has been observed rejecting this add-on's token for a
-# window around startup (403 on every bashio::config call) and then
-# accepting the very same token minutes later. When that happens, the
-# option reads above all fall back to script defaults, and rotation /
-# screen-timeout need to recover once the API comes back rather than
-# staying wrong for the whole run.
-#
-# IMPORTANT: bashio's log functions (lib/log.sh) write straight to a file
-# descriptor it saves BEFORE any redirection happens (`exec {LOG_FD}>&1`
-# at source time), so `bashio::config ... 2>/dev/null` does NOT suppress
-# the "Unable to access the API, forbidden" / "Failed to get addon config"
-# lines bashio itself logs on every failed call -- that was tried and
-# doesn't work. The only lever available from here is fewer calls. So:
-# ONE shared poller (not one per consumer -- two independent pollers used
-# to roughly double the log volume), with an initial delay and backoff
-# instead of a flat interval: waits 30s before the first retry (5 attempts
-# were already made seconds apart during boot, so retrying immediately is
-# unlikely to help), then 15s/15s/30s/30s/60s/60s/60s -- about 8 total
-# canary calls across a ~5 minute window instead of up to 120.
-RECOVERED_ROTATION_FILE="/tmp/.kiosk_recovered_rotation"
-RECOVERED_SCREEN_TIMEOUT_FILE="/tmp/.kiosk_recovered_screen_timeout"
-rm -f "$RECOVERED_ROTATION_FILE" "$RECOVERED_SCREEN_TIMEOUT_FILE"
-if [ "$SUPERVISOR_READY" -eq 0 ]; then
-    (
-        for delay in 30 15 15 30 30 60 60 60; do
-            sleep "$delay"
-            recovered_url=$(bashio::config 'ha_url' 2>/dev/null || true)
-            if [ -n "$recovered_url" ] && [ "$recovered_url" != "null" ]; then
-                bashio::config 'rotate_display' >"$RECOVERED_ROTATION_FILE" 2>/dev/null || true
-                bashio::config 'screen_timeout' >"$RECOVERED_SCREEN_TIMEOUT_FILE" 2>/dev/null || true
-                bashio::log.info "Supervisor API recovered -- rotation and screen_timeout will use the configured values from here on."
-                exit 0
-            fi
-        done
-        bashio::log.warning "Supervisor API did not recover within ~5 minutes -- keeping boot-time fallback values (rotate_display '${ROTATION_CONFIG}', screen_timeout ${SCREEN_TIMEOUT}s) for this run."
-    ) &
-fi
-
-# Waits for the shared poller above to either write its result file or
-# give up. Makes no bashio::config calls of its own, so it adds zero
-# further log noise -- just a plain `[ -f ]` check on a local file.
-wait_for_recovered_option() {
-    local file="$1"
-    local fallback="$2"
-    local elapsed=0
-    local val=""
-    if [ "$SUPERVISOR_READY" -eq 1 ]; then
-        echo "$fallback"
-        return 0
-    fi
-    while [ "$elapsed" -lt 305 ]; do
-        if [ -f "$file" ]; then
-            val=$(cat "$file" 2>/dev/null || true)
-            if [ -n "$val" ] && [ "$val" != "null" ]; then
-                echo "$val"
-                return 0
-            fi
-        fi
-        sleep 2
-        elapsed=$((elapsed + 2))
-    done
-    echo "$fallback"
-}
+bashio::log.info "Rotation config '$ROTATION_CONFIG' -> output transform $ROTATION_DEGREES"
+export CAGE_TOUCH_OUTPUT="$ACTIVE_OUTPUT"
 
 # ---------------------------------------------------------
 # WAIT FOR HOME ASSISTANT TO SERVE HTTP (boot ordering)
@@ -347,26 +262,19 @@ fi
 # likely on aarch64/armv7 hardware). Echoes the discovered socket name and
 # returns non-zero on timeout so callers can each log their own context.
 wait_for_wayland_socket() {
-    local elapsed=0
-    local max_wait=15
     local wl_display=""
-    while [ "$elapsed" -lt "$max_wait" ]; do
+    for _attempt in $(seq 1 30); do
         wl_display=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -m 1 "wayland-[0-9]*$" || true)
         if [ -n "$wl_display" ]; then
             echo "$wl_display"
             return 0
         fi
         sleep 0.5
-        elapsed=$((elapsed + 1))
     done
     return 1
 }
 
-# Screen timeout. Spawned unconditionally: if the Supervisor API was down
-# at boot, SCREEN_TIMEOUT holds the fallback (0, the documented default),
-# and the subshell picks up the real configured value once the API
-# recovers before deciding.
-#
+# Screen timeout.
 # NOTE: wlr-randr has NO wildcard support -- `--output *` fails with
 # "unknown output *" (a previous version did exactly that, so blanking
 # never worked). The real connector name must be used.
@@ -379,24 +287,43 @@ wait_for_wayland_socket() {
         exit 0
     }
     export WAYLAND_DISPLAY="$wl_display"
-    timeout_final=$(wait_for_recovered_option "$RECOVERED_SCREEN_TIMEOUT_FILE" "$SCREEN_TIMEOUT")
-    if [ "$timeout_final" != "$SCREEN_TIMEOUT" ]; then
-        bashio::log.info "Supervisor API recovered -- screen_timeout is ${timeout_final}s (boot-time fallback was ${SCREEN_TIMEOUT}s)."
-    fi
-    if [ "$timeout_final" -gt 0 ] 2>/dev/null; then
-        bashio::log.info "Setting screen timeout to ${timeout_final} seconds on ${ACTIVE_OUTPUT}..."
+    if [ "$SCREEN_TIMEOUT" -gt 0 ] 2>/dev/null; then
+        bashio::log.info "Setting screen timeout to ${SCREEN_TIMEOUT} seconds on ${ACTIVE_OUTPUT}..."
         exec swayidle -w \
-            timeout "$timeout_final" "wlr-randr --output $ACTIVE_OUTPUT --off" \
+            timeout "$SCREEN_TIMEOUT" "wlr-randr --output $ACTIVE_OUTPUT --off" \
             resume "wlr-randr --output $ACTIVE_OUTPUT --on"
     else
         bashio::log.info "Screen timeout disabled."
     fi
 ) &
 
-# REST API server. KIOSK_OUTPUT tells it which output its display_on/off
-# commands should target (wlr-randr has no wildcard).
+# REST API server. It must inherit the compositor's WAYLAND_DISPLAY or all
+# wlr-randr/wtype endpoints fail even though the HTTP server itself is up.
 export KIOSK_OUTPUT="$ACTIVE_OUTPUT"
-python3 /app/rest_server.py &
+(
+    wl_display=$(wait_for_wayland_socket) || {
+        bashio::log.error "Wayland socket never appeared after 15s -- control API was NOT started."
+        exit 0
+    }
+    export WAYLAND_DISPLAY="$wl_display"
+    exec python3 /app/rest_server.py
+) &
+
+# Periodic browser refresh. Zero disables it; positive values are seconds.
+if [ "$BROWSER_REFRESH" -gt 0 ] 2>/dev/null; then
+    (
+        wl_display=$(wait_for_wayland_socket) || exit 0
+        export WAYLAND_DISPLAY="$wl_display"
+        while sleep "$BROWSER_REFRESH"; do
+            if ! wtype -k F5; then
+                bashio::log.warning "Periodic browser refresh failed."
+            fi
+        done
+    ) &
+    bashio::log.info "Periodic browser refresh enabled every ${BROWSER_REFRESH}s."
+else
+    bashio::log.info "Periodic browser refresh disabled."
+fi
 
 # Log what the browser actually has open -- the "address bar" contents --
 # so display-side issues (stacked tabs, unexpected redirects, login pages)
@@ -422,26 +349,6 @@ for url in pages:
     done
 ) &
 
-# Apply output rotation once Cage's Wayland socket actually exists.
-# Spawned unconditionally for the same API-recovery reason as swayidle:
-# if options fell back at boot, rotation looked like "normal" here even
-# though the user configured e.g. "right".
-(
-    wl_display=$(wait_for_wayland_socket) || {
-        bashio::log.error "Wayland socket never appeared after 15s -- rotation was NOT applied."
-        exit 0
-    }
-    export WAYLAND_DISPLAY="$wl_display"
-    rotation_final=$(wait_for_recovered_option "$RECOVERED_ROTATION_FILE" "$ROTATION_CONFIG")
-    transform=$(rotation_to_transform "$rotation_final")
-    if [ "$transform" != "normal" ]; then
-        bashio::log.info "Applying rotation '${rotation_final}' (transform ${transform}) to $ACTIVE_OUTPUT..."
-        wlr-randr --output "$ACTIVE_OUTPUT" --transform "$transform"
-    else
-        bashio::log.info "Rotation '${rotation_final}' -> no output transform to apply."
-    fi
-) &
-
 # ---------------------------------------------------------
 # LOGIN HANDLING
 # ---------------------------------------------------------
@@ -463,6 +370,12 @@ case "$AUTH_METHOD" in
             bashio::log.warning "auth_method is 'credentials' but ha_username/ha_password are not both set -- skipping auto-login."
         else
             (
+                wl_display=$(wait_for_wayland_socket) || {
+                    bashio::log.warning "Wayland socket unavailable -- skipping credential auto-login."
+                    exit 0
+                }
+                export WAYLAND_DISPLAY="$wl_display"
+
                 # login_delay is schema'd as float(0,), so it may arrive as
                 # e.g. "10.5" -- bash's [ -lt ] only does integers, so this
                 # truncates to whole seconds for the loop bound.
@@ -474,7 +387,14 @@ case "$AUTH_METHOD" in
                 elapsed=0
                 found=0
                 while [ "$elapsed" -lt "$login_delay_int" ]; do
-                    page_url=$(curl -s --max-time 2 http://localhost:9222/json 2>/dev/null | grep -o '"url":"[^"]*"' | head -n 1 || true)
+                    page_url=$(curl -s --max-time 2 http://localhost:9222/json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    pages = json.load(sys.stdin)
+    print(next((p.get("url", "") for p in pages if p.get("type") == "page"), ""))
+except Exception:
+    pass
+' || true)
                     if echo "$page_url" | grep -q "auth/authorize"; then
                         found=1
                         break
@@ -515,19 +435,11 @@ esac
 # --disable-dev-shm-usage: Docker gives containers a 64MB /dev/shm by
 # default; Chromium rendering a large dashboard can exceed it and crash
 # tabs. This makes Chromium use /tmp instead.
-CHROMIUM_FLAGS="--kiosk --no-sandbox --enable-features=UseOzonePlatform --ozone-platform=wayland --disable-infobars --remote-debugging-port=9222 --no-first-run --disable-sync --disable-background-networking --disable-component-update --disable-features=GCM --disable-dev-shm-usage"
-
-if bashio::config.true 'ignore_certificate_errors'; then
-    CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --ignore-certificate-errors"
-fi
-
 # NOTE: --bwsi (guest/ephemeral profile) was removed. It wiped the Chromium
 # profile on every restart, which meant any logged-in session never
 # persisted -- forcing a fresh auto-login (or trusted_networks bypass) on
 # every single container restart. A persistent profile directory under
 # /data lets a real login session survive add-on/container restarts.
-CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --user-data-dir=/data/chromium-profile"
-
 # The persistent profile has a side effect: a kiosk container never exits
 # cleanly (every stop kills Chromium mid-flight), so the profile records
 # exit_type "Crashed". On the next boot Chromium then RESTORES the previous
@@ -565,7 +477,6 @@ with open(path, "w") as f:
 PYEOF
 fi
 rm -rf "${CHROMIUM_PROFILE}/Default/Sessions" 2>/dev/null || true
-CHROMIUM_FLAGS="${CHROMIUM_FLAGS} --disable-session-crashed-bubble --hide-crash-restore-bubble"
 
 # Launching the REAL chromium binary at its full path, not `chromium` /
 # `chromium-browser` on PATH -- on this Alpine image BOTH of those are
@@ -598,7 +509,12 @@ if [ ! -x "$CHROMIUM_BIN" ]; then
     CHROMIUM_BIN="chromium-browser"
 fi
 export CHROME_DESKTOP="chromium.desktop"
+export KIOSK_URL="$URL"
+export KIOSK_ROTATION="$ROTATION_CONFIG"
+export KIOSK_ROTATION_TRANSFORM="$ROTATION_DEGREES"
+export KIOSK_CHROMIUM_BIN="$CHROMIUM_BIN"
+export KIOSK_IGNORE_CERTIFICATE_ERRORS="$IGNORE_CERTIFICATE_ERRORS"
 
 bashio::log.info "Starting Cage with Chromium pointing to: ${URL}"
 
-exec cage -s -- "${CHROMIUM_BIN}" ${CHROMIUM_FLAGS} "${URL}"
+exec /usr/local/bin/cage -s -- /app/launch-browser.sh

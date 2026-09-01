@@ -3,10 +3,9 @@ import shlex
 import logging
 import asyncio
 import urllib.request
-import urllib.error
 import json
 from typing import Any, Dict, Optional
-from aiohttp import web
+from aiohttp import ClientSession, WSMsgType, web
 
 # Type alias for your payload
 Payload = Dict[str, Any]
@@ -41,13 +40,6 @@ def load_options() -> Dict[str, Any]:
 
 OPTIONS = load_options()
 API_TOKEN: Optional[str] = OPTIONS.get("api_token") or None
-
-if not API_TOKEN:
-    logging.warning(
-        "api_token is not set -- the control API is unauthenticated on "
-        "whatever interface it's bound to. Set api_token in the add-on "
-        "configuration to require callers to send it as a Bearer token."
-    )
 
 # --------------------------------------------------------------------------- #
 # SERVER ROUTING
@@ -100,19 +92,74 @@ async def execute_command(cmd_list, timeout=SHORT_TIMEOUT, log_prefix="", allow_
         return {"success": False, "error": str(e)}
 
 
+async def start_background_command(cmd_list, log_prefix=""):
+    """Start a whitelisted long-running process without waiting for exit."""
+    if not cmd_list or cmd_list[0] not in ALLOWED_COMMANDS:
+        return {"success": False, "error": "Command is not whitelisted."}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_list,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.sleep(0.2)
+        if proc.returncode is not None:
+            return {
+                "success": False,
+                "error": f"Command exited immediately with status {proc.returncode}",
+            }
+        logging.info("[%s] started PID %d", log_prefix, proc.pid)
+        return {"success": True, "pid": proc.pid}
+    except Exception as exc:
+        logging.exception("[%s] background start failed", log_prefix)
+        return {"success": False, "error": str(exc)}
+
+
+async def cdp_page_command(method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Send a command to the first Chromium page target over CDP."""
+    try:
+        def _targets():
+            with urllib.request.urlopen("http://127.0.0.1:9222/json", timeout=5) as response:
+                return json.loads(response.read())
+
+        targets = await asyncio.to_thread(_targets)
+        page = next((target for target in targets if target.get("type") == "page"), None)
+        if not page or not page.get("webSocketDebuggerUrl"):
+            return {"success": False, "error": "No Chromium page target found"}
+
+        async with ClientSession() as session:
+            async with session.ws_connect(page["webSocketDebuggerUrl"], receive_timeout=5) as ws:
+                await ws.send_json({"id": 1, "method": method, "params": params or {}})
+                async for message in ws:
+                    if message.type == WSMsgType.TEXT:
+                        response = json.loads(message.data)
+                        if response.get("id") != 1:
+                            continue
+                        if "error" in response:
+                            return {"success": False, "error": response["error"]}
+                        return {"success": True, "result": response.get("result", {})}
+                    if message.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
+                        break
+        return {"success": False, "error": "Chromium closed the CDP connection"}
+    except Exception as exc:
+        logging.exception("CDP command %s failed", method)
+        return {"success": False, "error": str(exc)}
+
+
 # CHROME WATCHDOG
 async def chromium_watchdog():
-    """Polls the CDP endpoint to verify Chromium is not frozen."""
+    """Verify both Chromium's browser process and its page renderer."""
     failures = 0
     await asyncio.sleep(20)  # give Chromium time to finish its initial boot
 
     while True:
         try:
-            def _ping():
-                req = urllib.request.Request("http://localhost:9222/json")
-                urllib.request.urlopen(req, timeout=5)
-
-            await asyncio.to_thread(_ping)
+            result = await cdp_page_command(
+                "Runtime.evaluate",
+                {"expression": "1", "returnByValue": True},
+            )
+            if not result["success"]:
+                raise RuntimeError(result.get("error", "renderer did not respond"))
             failures = 0
 
         except Exception:
@@ -132,10 +179,8 @@ async def chromium_watchdog():
 
 @register_function("refresh_browser")
 async def handle_refresh_browser(data: Payload) -> Dict[str, Any]:
-    """Send F5 to refresh browser via wtype."""
-    result = await execute_command(["wtype", "-k", "F5"],
-                                    timeout=SHORT_TIMEOUT, log_prefix="refresh_browser", allow_command=True)
-    return {"success": result["success"]}
+    """Reload the kiosk page through Chromium's DevTools protocol."""
+    return await cdp_page_command("Page.reload", {"ignoreCache": False})
 
 
 @register_function("is_display_on")
@@ -175,7 +220,14 @@ async def handle_display_on(data: Payload) -> Dict[str, Any]:
         ]
         log_msg = f" Screen timeout: {blank_timeout}s"
 
-    results = [await execute_command(cmd, timeout=SHORT_TIMEOUT, log_prefix="display_on", allow_command=True) for cmd in cmds]
+    results = []
+    for cmd in cmds:
+        if cmd[0] == "swayidle":
+            results.append(await start_background_command(cmd, log_prefix="display_on"))
+        else:
+            results.append(await execute_command(
+                cmd, timeout=SHORT_TIMEOUT, log_prefix="display_on", allow_command=True
+            ))
     logging.info("[display_on]%s", log_msg)
     return {"success": all(r["success"] for r in results), "results": results}
 
@@ -208,28 +260,13 @@ async def handle_wlr_randr(data: Payload) -> Dict[str, Any]:
 @register_function("launch_url", optional=["url"])
 async def handle_launch_url(data: Payload) -> Dict[str, Any]:
     """Redirect browser to given URL via Chrome DevTools Protocol."""
-    url = str(data["url"]) if data.get("url") else "http://supervisor/core"
+    url = str(data["url"]) if data.get("url") else str(OPTIONS.get("ha_url") or "http://127.0.0.1:8123")
     if url != "about:blank" and not url.startswith(("http://", "https://")):
         url = "http://" + url
-
-    def _send_cdp_request():
-        try:
-            req = urllib.request.Request("http://localhost:9222/json")
-            with urllib.request.urlopen(req) as response:
-                pages = json.loads(response.read())
-            if not pages:
-                return False
-
-            target_id = pages[0]['id']
-            activate_req = urllib.request.Request(f"http://localhost:9222/json/activate/{target_id}", method='PUT')
-            urllib.request.urlopen(activate_req)
-            return True
-        except urllib.error.URLError as e:
-            logging.error("CDP Request failed: %s", e)
-            return False
-
-    success = await asyncio.to_thread(_send_cdp_request)
-    return {"success": success}
+    result = await cdp_page_command("Page.navigate", {"url": url})
+    if result["success"]:
+        result["url"] = url
+    return result
 
 # --------------------------------------------------------------------------- #
 # SERVER INITIALIZATION & WATCHDOG EXECUTION
@@ -265,6 +302,11 @@ async def api_handler(request):
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logging.info("Starting HAOS-Wayland-Kiosk REST API...")
+    if not API_TOKEN:
+        logging.info(
+            "api_token is not set; the control API remains restricted to "
+            "127.0.0.1 but does not require a Bearer token."
+        )
 
     asyncio.create_task(chromium_watchdog())
     logging.info("Chromium Watchdog initialized.")
