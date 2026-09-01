@@ -10,6 +10,23 @@ else
     bashio::log.warning "NO /dev/dri DIRECTORY FOUND! GPU passthrough is missing."
 fi
 
+# Confirm that the render node and installed VA-API backend work together.
+# The Alpine Chromium build enables Linux VA-API decoding, so a successful
+# probe here confirms that camera streams can reach the hardware decoder.
+if [ -c "/dev/dri/renderD128" ] && command -v vainfo >/dev/null 2>&1; then
+    if vaapi_info=$(vainfo --display drm --device /dev/dri/renderD128 2>&1); then
+        vaapi_driver=$(printf '%s\n' "$vaapi_info" | sed -n 's/.*Driver version: //p' | head -n 1)
+        if [ -n "$vaapi_driver" ]; then
+            bashio::log.info "VA-API hardware video decoding available: $vaapi_driver"
+        else
+            bashio::log.info "VA-API hardware video decoding available."
+        fi
+    else
+        bashio::log.warning "VA-API probe failed; Chromium camera streams will fall back to CPU decoding."
+        printf '%s\n' "$vaapi_info" | sed 's/^/[vainfo] /'
+    fi
+fi
+
 # 2. Scan physical display connectors in /sys/class/drm
 bashio::log.info "Scanning Connected Displays:"
 if [ -d "/sys/class/drm" ]; then

@@ -27,7 +27,7 @@ option works because it appears in the UI.
 | `ha_username` / `ha_password` | applied | Only used when `auth_method: credentials`. |
 | `login_delay` | applied | Seconds to wait for the login page before giving up on auto-login. |
 | `ignore_certificate_errors` | applied | Passes `--ignore-certificate-errors` to Chromium for self-signed HTTPS. |
-| `api_token` | applied | Optional bearer token for the REST control API, which binds to `127.0.0.1:8034`. |
+| `api_token` | applied | Optional app-local bearer token for the kiosk control API on `127.0.0.1:8034`. This is **not** a Home Assistant long-lived access token. |
 | `browser_refresh` | applied | Periodic page refresh interval in seconds. `0` disables periodic refresh. |
 | `ha_sidebar` | not applied yet | Accepted by the schema, read nowhere. Hiding the sidebar is better done with the kiosk-mode frontend plugin inside Home Assistant. |
 | `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
@@ -140,6 +140,13 @@ dismisses itself after `timeout` milliseconds. The same mechanism covers
 scripts (`action: browser_mod.popup` inside any script) and navigation
 (`browser_mod.navigate` to send the kiosk to another dashboard).
 
+On AMD systems, the image includes Mesa's Gallium VA-API backend so Chromium
+can decode supported camera video formats on the GPU. At startup the add-on
+tests `/dev/dri/renderD128` with `vainfo`. A healthy AMD host logs
+`VA-API hardware video decoding available` followed by the Mesa driver
+name. A probe failure is non-fatal, but means video decoding will use CPU
+until the DRM permissions or driver are corrected.
+
 ## Device access: how it works and how it broke
 
 Supervisor grants an add-on hardware access by resolving every entry in
@@ -200,3 +207,15 @@ This add-on spins up a background API server allowing you to control the screen 
 * `display_off`: Powers down the monitor output via `wlr-randr`.
 * `refresh_browser`: Triggers an active reload of the Chromium dashboard.
 * `launch_url`: Uses the Chrome DevTools Protocol to seamlessly navigate to a new page.
+
+The `api_token` option is a shared secret belonging only to this kiosk app.
+Do not paste a Home Assistant long-lived access token into it. When the option
+is set, every control request must contain:
+
+```text
+Authorization: Bearer <your kiosk control API token>
+```
+
+Because the API listens only on loopback, it cannot be reached directly from
+the LAN. With `host_network: true`, Home Assistant Core and other host-local
+processes can reach it.
