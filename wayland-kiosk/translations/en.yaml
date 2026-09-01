@@ -39,6 +39,22 @@
     "ignore_certificate_errors": {
       "name": "Ignore Certificate Errors",
       "description": "Bypass SSL/TLS certificate warnings for self-hosted instances."
+    },
+    "auth_method": {
+      "name": "Authentication Method",
+      "description": "Choose trusted networks, username/password automation, or no automatic authentication."
+    },
+    "ha_username": {
+      "name": "Home Assistant Username",
+      "description": "Username used only when Authentication Method is set to credentials."
+    },
+    "ha_password": {
+      "name": "Home Assistant Password",
+      "description": "Password used only when Authentication Method is set to credentials."
+    },
+    "api_token": {
+      "name": "Kiosk Control API Token",
+      "description": "Optional app-local bearer token protecting the control API on 127.0.0.1:8034. This is not a Home Assistant long-lived access token."
     }
   }
 }
