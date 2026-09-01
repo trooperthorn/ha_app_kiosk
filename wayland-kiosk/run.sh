@@ -11,8 +11,8 @@ else
 fi
 
 # Confirm that the render node and installed VA-API backend work together.
-# Chromium 152 enables Linux VA-API decoding by default, so a successful
-# probe here means camera streams can use the hardware decoder.
+# The Alpine Chromium build enables Linux VA-API decoding, so a successful
+# probe here confirms that camera streams can reach the hardware decoder.
 if [ -c "/dev/dri/renderD128" ] && command -v vainfo >/dev/null 2>&1; then
     if vaapi_info=$(vainfo --display drm --device /dev/dri/renderD128 2>&1); then
         vaapi_driver=$(printf '%s\n' "$vaapi_info" | sed -n 's/.*Driver version: //p' | head -n 1)
