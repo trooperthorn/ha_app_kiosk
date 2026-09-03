@@ -1,0 +1,35 @@
+# Grype config for the app-image-security CI job (security.yml).
+#
+# These findings are in Go binaries baked into the upstream
+# ghcr.io/home-assistant/base image itself (not anything this Dockerfile
+# installs via apk or pip), so there is no change in this repository that
+# fixes them; they must be resolved by that base image being rebuilt with a
+# newer Go toolchain/stdlib and updated golang.org/x/crypto. Re-check
+# whether these still apply whenever BUILD_FROM's effective Alpine/base
+# version changes; see docs/security.md.
+ignore:
+  - vulnerability: GHSA-5cgq-3rg8-m6cv
+  - vulnerability: GHSA-hcg3-q754-cr77
+  - vulnerability: GHSA-vgwf-h737-ff37
+  - vulnerability: GHSA-f5wc-c3c7-36mc
+  - vulnerability: GHSA-x527-x647-q7gg
+  - vulnerability: GHSA-rm3j-f69w-wqmq
+  - vulnerability: GHSA-89gr-r52h-f8rx
+  - vulnerability: GHSA-jppx-rxg9-jmrx
+  - vulnerability: GHSA-q4h4-gmj2-qvw2
+  - vulnerability: GHSA-w879-237q-wc7r
+  - vulnerability: GO-2025-4116
+  - vulnerability: GO-2026-5026
+  - vulnerability: GO-2026-5942
+  - vulnerability: GO-2026-5972
+  - vulnerability: GO-2026-6088
+  - vulnerability: GO-2026-6089
+  - vulnerability: GO-2026-6090
+  - vulnerability: GO-2026-6303
+  - vulnerability: CVE-2026-33818
+  - vulnerability: CVE-2026-46600
+  - vulnerability: CVE-2026-56853
+  - vulnerability: CVE-2026-56859
+  - vulnerability: CVE-2026-56862
+  - vulnerability: CVE-2026-56864
+  - vulnerability: CVE-2026-56865

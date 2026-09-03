@@ -65,6 +65,24 @@ was last built. This was added 2026-09-03 after the app-image-security
 CI job (Grype, `severity-cutoff: high`) found `libssl3`/`libcrypto3`
 3.5.7-r0 with fixed High-severity CVEs already published at 3.5.8-r0.
 
+## Image vulnerability scan scope
+
+The app-image-security CI job (Grype) runs with `only-fixed: true` and a
+`.grype.yaml` ignore list, added 2026-09-03 after the first run of this
+newly added gate. Chromium and ffmpeg between them always carry a large
+number of disclosed, currently-unfixed-in-the-packaged-version CVEs; Alpine
+edge's `chromium` package alone showed over 150 High/Critical findings with
+no `FIXED IN` version at all. Failing CI on every one of those would
+permanently block merges rather than catch anything this repository can
+act on, so the gate is scoped to findings where a fix is actually
+available. `.grype.yaml` additionally ignores a specific set of
+golang.org/x/crypto and Go stdlib CVEs that Grype reports as fixed
+upstream but that live in Go binaries compiled into the
+`ghcr.io/home-assistant/base` image itself, not in anything this
+Dockerfile installs -- there is no `apk add` or `pip install` change here
+that resolves them. Re-check both scopes whenever `BUILD_FROM`'s effective
+Alpine version changes.
+
 ## AppArmor stays on
 
 `config.yaml` does not set `apparmor: false`, and should not. That was

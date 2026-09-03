@@ -43,9 +43,12 @@ RUN apk add --no-cache \
     xwayland \
     curl \
     python3 \
-    py3-pip \
-    py3-requests \
-    py3-aiohttp
+    py3-pip
+
+# aiohttp via pip, not the py3-aiohttp apk package: Alpine's packaged version
+# lags behind aiohttp's own fixed releases (see docs/security.md). py3-pip
+# is already installed above.
+RUN pip install --no-cache-dir --break-system-packages aiohttp
 
 # Build a pinned Cage with a touch-to-output mapping patch; see docs/design.md.
 # The upstream Alpine cage package stays installed so it owns runtime deps.

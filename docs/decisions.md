@@ -72,6 +72,16 @@ reverted to `:latest` for this reason; it must not be pinned to a specific
 Alpine release without first confirming `wlroots0.20-dev` (or whatever
 Cage's wlroots dependency becomes) is available on that release.
 
+## aiohttp installed via pip, not the py3-aiohttp apk package; py3-requests dropped (2026-09-03)
+
+Adding the Grype vulnerability scan (see docs/security.md) found
+`py3-aiohttp` at 3.13.5 with a High-severity fix published at 3.14.3.
+Alpine's packaged version lags upstream releases, so `apk upgrade` cannot
+reach the fix. Switched to `pip install aiohttp`, which tracks upstream
+releases directly. While auditing that package list, `py3-requests` was
+also removed: `rest_server.py` imports `urllib.request` and `aiohttp`, not
+`requests`, so the package was dead weight with no functional use.
+
 ## `register_function`'s required/validators were unenforced
 
 `rest_server.py`'s `register_function` decorator originally accepted

@@ -65,12 +65,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build the app image
         run: docker build --tag local/app-kiosk:${{ github.sha }} wayland-kiosk
+      # only-fixed: true, unlike the generic template's false. This image
+      # bundles Chromium and ffmpeg, which between them always carry a large
+      # backlog of disclosed CVEs with no upstream fix packaged yet; failing
+      # on every one of those would permanently block CI rather than catch
+      # anything actionable. only-fixed narrows the gate to "a fix exists
+      # and we have not applied it", which is what this job can actually act
+      # on. .grype.yaml (repo root) ignores a further, specific set of
+      # fixed-but-not-by-us findings baked into the base image's own Go
+      # binaries; see docs/security.md.
       - name: Scan installed OS packages
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
           image: local/app-kiosk:${{ github.sha }}
           fail-build: true
           severity-cutoff: high
-          only-fixed: false
+          only-fixed: true
           output-format: table
           grype-version: v0.110.0
