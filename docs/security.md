@@ -56,6 +56,15 @@ minimum grant Supervisor's udev-backed device model supports. See
 `docs/operations.md` for why the list must be individual nodes rather than
 directories, and why over-listing nonexistent nodes is safe.
 
+## Base image package patching
+
+The Dockerfile runs `apk upgrade --no-cache` right after `FROM`, before
+installing anything else, so the image ships current Alpine security
+patches rather than whatever was cached when `ghcr.io/home-assistant/base`
+was last built. This was added 2026-09-03 after the app-image-security
+CI job (Grype, `severity-cutoff: high`) found `libssl3`/`libcrypto3`
+3.5.7-r0 with fixed High-severity CVEs already published at 3.5.8-r0.
+
 ## AppArmor stays on
 
 `config.yaml` does not set `apparmor: false`, and should not. That was

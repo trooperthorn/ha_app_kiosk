@@ -12,6 +12,10 @@ LABEL \
     io.hass.type="app" \
     io.hass.arch="${BUILD_ARCH}"
 
+# Pull current package-level security patches before installing anything;
+# see docs/security.md.
+RUN apk upgrade --no-cache
+
 # Install Cage, Chromium, Wayland tools, and Python environment.
 # mesa-va-gallium supplies radeonsi_drv_video.so so Chromium can decode
 # AMD-accelerated H.264/VP8/VP9 camera streams instead of falling back to CPU.
