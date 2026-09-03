@@ -6,33 +6,17 @@ init: false
 startup: application
 url: "https://github.com/trooperthorn/ha_app_kiosk/"
 
-# --- Network and API Access ---
-# host_network is required so that ha_url: http://127.0.0.1:8123 reaches the
-# real Home Assistant Core instance (with host_network off, 127.0.0.1 would
-# just be the container's own loopback). It's also what makes the
-# trusted_networks auth provider trivially trust this add-on's requests.
+# host_network is required for ha_url: http://127.0.0.1:8123 to reach the
+# real Core instance; see docs/security.md.
 host_network: true
 
 arch:
   - aarch64
   - amd64
 
-# --- Hardware and System Access ---
-# Minimum permissions: explicit device passthrough instead of full_access.
-# full_access: true (previous config) granted access to every device on the
-# host, which is far more than this add-on needs. Only /dev/dri (GPU/DRM)
-# and /dev/input (touch/keyboard) are actually required.
-#
-# FORMAT MATTERS: each entry must be a single, individual device-node path.
-# Supervisor looks every entry up in its udev hardware database and grants
-# access via a cgroup device rule (docker/app.py cgroups_rules); anything it
-# can't find there -- a directory like /dev/dri, or the old Docker-style
-# "/dev/dri:/dev/dri:rwm" triplet this file used to contain -- is SILENTLY
-# skipped (debug-level log only). The add-on then starts with zero device
-# grants: the nodes are still visible in /dev, but open() fails with EPERM
-# ("Operation not permitted") from the cgroup v2 device filter, and Cage
-# dies with "Found 0 GPUs". Nodes listed here that don't exist on a given
-# host are skipped harmlessly, so over-listing is safe.
+# Explicit device-node passthrough, not full_access; entries must be
+# individual nodes, not directories. See docs/security.md and
+# docs/operations.md.
 udev: true
 audio: true
 devices:
@@ -67,12 +51,8 @@ devices:
   - /dev/input/event24
   - /dev/input/event25
 
-# NOTE: do NOT set `apparmor: false` here. It was once tried as a fix for
-# the /dev/dri "Operation not permitted" crash and did nothing (the real
-# cause was the malformed `devices:` entries described above); it only
-# strips the add-on's security confinement for no benefit.
+# Do NOT set apparmor: false; see docs/decisions.md.
 
-# --- Storage and Limits ---
 map:
   - addon_config:rw
   - media:rw
@@ -82,7 +62,6 @@ ulimits:
     soft: 65536
     hard: 65536
 
-# --- Default User Configuration ---
 options:
   ha_url: "http://127.0.0.1:8123"
   ha_dashboard: "lovelace"
@@ -94,15 +73,13 @@ options:
   rotate_display: "right"
   login_delay: 10
   ignore_certificate_errors: true
-  # Auth options (new)
   auth_method: "trusted_networks"
   ha_username: ""
   ha_password: ""
-  # Optional app-local shared secret for rest_server.py's loopback control API.
-  # This is NOT a Home Assistant long-lived access token.
+  # App-local shared secret for the control API; not a HA long-lived
+  # access token. See docs/security.md.
   api_token: ""
 
-# --- Enforced UI Schema ---
 schema:
   ha_url: url
   ha_dashboard: str?

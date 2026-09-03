@@ -1,8 +1,6 @@
 #!/usr/bin/env bashio
 
-# Cage starts its child only after the compositor and Wayland socket exist.
-# Applying the output transform here means Chromium creates its first surface
-# at the final portrait/landscape size instead of being resized minutes later.
+# Apply rotation before Chromium's first surface, so it starts at final size.
 if wlr-randr \
     --output "$KIOSK_OUTPUT" \
     --transform "$KIOSK_ROTATION_TRANSFORM"; then
@@ -35,9 +33,7 @@ if [ "$KIOSK_IGNORE_CERTIFICATE_ERRORS" = "true" ]; then
     chromium_args+=(--ignore-certificate-errors)
 fi
 
-# App mode is deliberate in addition to --kiosk. Cage maximizes its single
-# application window; --app removes tabs and the address bar even on Wayland
-# builds which ignore Chromium's early fullscreen request.
+# --app (with --kiosk) removes tabs/address bar even if fullscreen is ignored.
 chromium_args+=("--app=${KIOSK_URL}")
 
 exec "$KIOSK_CHROMIUM_BIN" "${chromium_args[@]}"

@@ -1,0 +1,4 @@
+# Security-sensitive runtime and delivery surfaces require owner review.
+/wayland-kiosk/ @trooperthorn
+/.github/workflows/ @trooperthorn
+/SECURITY.md @trooperthorn

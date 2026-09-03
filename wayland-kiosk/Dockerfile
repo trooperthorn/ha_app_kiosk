@@ -1,5 +1,12 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
+ARG BUILD_FROM=ghcr.io/home-assistant/base:3.23
 FROM ${BUILD_FROM}
+
+ARG BUILD_VERSION
+ARG BUILD_ARCH
+LABEL \
+    io.hass.version="${BUILD_VERSION}" \
+    io.hass.type="app" \
+    io.hass.arch="${BUILD_ARCH}"
 
 # Install Cage, Chromium, Wayland tools, and Python environment.
 # mesa-va-gallium supplies radeonsi_drv_video.so so Chromium can decode
@@ -32,13 +39,8 @@ RUN apk add --no-cache \
     py3-requests \
     py3-aiohttp
 
-# Cage only transforms touchscreen coordinates after the input device has
-# been mapped to an output. USB panels commonly omit the WL_OUTPUT udev
-# property, and Home Assistant OS exposes its host udev database read-only
-# to add-ons. Build a pinned Cage with a narrow patch that maps unassigned
-# inputs to the connector supplied through CAGE_TOUCH_OUTPUT once that
-# output is initialized. The upstream Alpine cage package remains installed
-# so it owns all matching runtime dependencies.
+# Build a pinned Cage with a touch-to-output mapping patch; see docs/design.md.
+# The upstream Alpine cage package stays installed so it owns runtime deps.
 ARG CAGE_VERSION=0.3.1
 ARG CAGE_SHA512=b220767df979e4315233643d8285c9a26925684f95ef1d0c3ad87e05042598c33e630ba960a5569e3ee971a2e86ff0f44ac7361f03dcc5dee78995faa8fa1189
 COPY cage-map-unassigned-input.patch /tmp/cage-map-unassigned-input.patch

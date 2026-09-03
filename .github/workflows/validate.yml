@@ -1,0 +1,46 @@
+# Catches problems that would break the app store add before a release is
+# cut. Apps are not distributed through HACS (HACS does not handle apps),
+# so there is no hacs/action or hassfest job here; this repository's
+# validation is repository.yaml/config.yaml well-formedness plus a
+# Dockerfile lint.
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  app-config:
+    name: App config well-formed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Validate YAML
+        run: |
+          pip install pyyaml
+          python -c "
+          import yaml
+          for f in ['wayland-kiosk/config.yaml', 'repository.yaml', 'display-kiosk.yaml']:
+              with open(f, encoding='utf-8') as fh:
+                  yaml.safe_load(fh)
+              print(f, 'OK')
+          "
+
+  hadolint:
+    name: Dockerfile lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: wayland-kiosk/Dockerfile
