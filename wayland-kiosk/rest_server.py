@@ -2,6 +2,7 @@ import os
 import shlex
 import logging
 import asyncio
+import time
 import urllib.request
 import json
 from typing import Any, Dict, Optional
@@ -14,6 +15,17 @@ WATCHDOG_RENDERER_TIMEOUT = 15
 WATCHDOG_FINAL_TIMEOUT = 30
 WATCHDOG_FAILURE_LIMIT = 3
 WATCHDOG_INTERVAL = 30
+DISPLAY_POLL_INTERVAL = 2
+
+START_TIME = time.monotonic()
+
+# Set by display_freeze_watcher, read by chromium_watchdog and health_handler;
+# see docs/operations.md.
+RUNTIME_STATE: Dict[str, Any] = {
+    "display_on": None,
+    "display_frozen": False,
+    "chromium_responsive": True,
+}
 
 # CDP calls are serialized; see docs/design.md.
 CDP_LOCK = asyncio.Lock()
@@ -79,6 +91,17 @@ async def execute_command(cmd_list, timeout=SHORT_TIMEOUT, log_prefix="", allow_
     except Exception as e:
         logging.exception("[%s] execution failed", log_prefix)
         return {"success": False, "error": str(e)}
+
+
+async def query_display_on() -> Optional[bool]:
+    """Query wlr-randr for the current output power state, or None on failure."""
+    result = await execute_command(
+        ["wlr-randr"], print_stdout=False, timeout=SHORT_TIMEOUT,
+        log_prefix="display_poll", allow_command=True,
+    )
+    if not result["success"]:
+        return None
+    return "Enabled: yes" in result["stdout"]
 
 
 async def start_background_command(cmd_list, log_prefix=""):
@@ -161,6 +184,13 @@ async def chromium_watchdog():
     await asyncio.sleep(20)  # give Chromium time to finish its initial boot
 
     while True:
+        # A frozen page (see display_freeze_watcher) fails a renderer check by
+        # design -- its timers are paused -- so skip the check entirely rather
+        # than let this false-positive drive a restart.
+        if RUNTIME_STATE["display_frozen"]:
+            await asyncio.sleep(WATCHDOG_INTERVAL)
+            continue
+
         result = await cdp_page_command(
             "Runtime.evaluate",
             {"expression": "1", "returnByValue": True},
@@ -172,8 +202,10 @@ async def chromium_watchdog():
             if failures:
                 logging.info("Watchdog: Chromium renderer recovered.")
             failures = 0
+            RUNTIME_STATE["chromium_responsive"] = True
         else:
             failures += 1
+            RUNTIME_STATE["chromium_responsive"] = False
             logging.warning(
                 "Watchdog: Chromium renderer unresponsive (%d/%d): %s",
                 failures,
@@ -223,6 +255,41 @@ async def chromium_watchdog():
 
         await asyncio.sleep(WATCHDOG_INTERVAL)
 
+
+async def display_freeze_watcher():
+    """Freeze Chromium's page lifecycle while the output is blanked.
+
+    The physical output can go dark through three independent paths --
+    run.sh's static swayidle process, a second swayidle started by
+    display_on's `timeout` argument, or a direct display_off/wlr_randr call --
+    none of which know about this server. Polling wlr-randr instead of
+    hooking each path is what makes freezing cover all three; see
+    docs/operations.md.
+    """
+    if not KIOSK_OUTPUT:
+        logging.info("Freeze watcher: KIOSK_OUTPUT is not set; not starting.")
+        return
+
+    while True:
+        is_on = await query_display_on()
+        if is_on is not None:
+            RUNTIME_STATE["display_on"] = is_on
+            should_freeze = not is_on
+            if should_freeze != RUNTIME_STATE["display_frozen"]:
+                state = "frozen" if should_freeze else "active"
+                result = await cdp_page_command(
+                    "Page.setWebLifecycleState", {"state": state}, log_failure=False
+                )
+                if result["success"]:
+                    RUNTIME_STATE["display_frozen"] = should_freeze
+                    logging.info(
+                        "Freeze watcher: output %s -> page %s",
+                        "off" if should_freeze else "on",
+                        state,
+                    )
+
+        await asyncio.sleep(DISPLAY_POLL_INTERVAL)
+
 # WAYLAND API ENDPOINTS
 
 @register_function("refresh_browser")
@@ -234,14 +301,21 @@ async def handle_refresh_browser(data: Payload) -> Dict[str, Any]:
 @register_function("is_display_on")
 async def handle_is_display_on(data: Payload) -> Dict[str, Any]:
     """Return boolean whether monitor is currently on."""
-    result = await execute_command(["wlr-randr"], print_stdout=False,
-                                    timeout=SHORT_TIMEOUT, log_prefix="is_display_on", allow_command=True)
-    if not result["success"]:
+    is_on = await query_display_on()
+    if is_on is None:
         return {"success": False, "error": "Failed to query display state"}
 
-    is_on = "Enabled: yes" in result["stdout"]
     logging.info("[is_display_on] Monitor is %s", "ON" if is_on else "OFF")
     return {"success": True, "display_on": is_on}
+
+
+@register_function("screenshot")
+async def handle_screenshot(data: Payload) -> Dict[str, Any]:
+    """Capture the current Chromium frame via CDP, base64-encoded PNG."""
+    result = await cdp_page_command("Page.captureScreenshot", {"format": "png"})
+    if not result["success"]:
+        return result
+    return {"success": True, "format": "png", "data": result["result"].get("data", "")}
 
 
 @register_function("display_on", optional=["timeout"])
@@ -343,6 +417,18 @@ async def api_handler(request):
         return web.json_response({"success": False, "error": "Internal server error"}, status=500)
 
 
+async def health_handler(request):
+    """Unauthenticated read-only status, for external monitoring; see
+    docs/security.md for why this endpoint carries no token check."""
+    return web.json_response({
+        "success": True,
+        "app_uptime_seconds": round(time.monotonic() - START_TIME, 1),
+        "display_on": RUNTIME_STATE["display_on"],
+        "display_frozen": RUNTIME_STATE["display_frozen"],
+        "chromium_responsive": RUNTIME_STATE["chromium_responsive"],
+    })
+
+
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logging.info("Starting HAOS-Wayland-Kiosk REST API...")
@@ -355,9 +441,12 @@ async def main():
 
     asyncio.create_task(chromium_watchdog())
     logging.info("Chromium Watchdog initialized.")
+    asyncio.create_task(display_freeze_watcher())
+    logging.info("Display freeze watcher initialized.")
 
     app = web.Application()
     app.router.add_post('/api', api_handler)
+    app.router.add_get('/api/health', health_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()
