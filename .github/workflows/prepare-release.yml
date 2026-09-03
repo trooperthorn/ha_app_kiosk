@@ -44,13 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CURRENT_VERSION="$(python3 - <<'PY'
-          from pathlib import Path
-          from scripts.build_release_artifacts import validate_versions
-          from scripts.release_config import load
-          print(validate_versions(load(Path.cwd())))
-          PY
-          )"
+          CURRENT_VERSION="$(python3 scripts/build_release_artifacts.py --validate-only)"
           LATEST_TAG="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/latest" \
             --jq .tag_name 2>/dev/null || true)"
 
