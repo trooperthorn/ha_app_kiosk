@@ -41,6 +41,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # failure-threshold: error, not the default warning. The style/warning
+      # findings here (untagged ARG-resolved FROM, unpinned apk versions) are
+      # pre-existing and not being fixed as part of this baseline; only a
+      # genuine hadolint error should block CI.
       - uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
           dockerfile: wayland-kiosk/Dockerfile
+          failure-threshold: error

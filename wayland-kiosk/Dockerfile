@@ -1,4 +1,8 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/base:3.23
+# Stays on :latest (Alpine edge), not a pinned stable release: the Cage
+# build below requires wlroots0.20-dev, which only exists in Alpine edge's
+# package index, not in any pinned stable branch (verified against
+# pkgs.alpinelinux.org). See docs/decisions.md.
+ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
 FROM ${BUILD_FROM}
 
 ARG BUILD_VERSION

@@ -56,6 +56,22 @@ persistent profile under `/data/chromium-profile` fixes that, at the cost
 of the tab-restore-stacking problem described above, which is handled
 separately.
 
+## Base image stays on `:latest`, not a pinned Alpine release (2026-09-03)
+
+The `build.yaml` migration (see `wayland-kiosk/build.yaml`'s retirement,
+blog/2026-04-02-builder-migration.md) initially pinned `BUILD_FROM` to
+`ghcr.io/home-assistant/base:3.23`, matching the pattern the
+`home-assistant/apps-example` Dockerfile uses. That broke the image build:
+`apk add wlroots0.20-dev` failed with "no such package". Checking
+pkgs.alpinelinux.org showed `wlroots0.20-dev` exists only in Alpine edge;
+both the 3.22 and 3.23 stable branches package a single unversioned
+`wlroots-dev` instead. `ghcr.io/home-assistant/base:latest` tracks Alpine
+edge, which is what the previous per-arch `:latest` base images
+(`amd64-base:latest`, `aarch64-base:latest`) also tracked. `BUILD_FROM` was
+reverted to `:latest` for this reason; it must not be pinned to a specific
+Alpine release without first confirming `wlroots0.20-dev` (or whatever
+Cage's wlroots dependency becomes) is available on that release.
+
 ## `register_function`'s required/validators were unenforced
 
 `rest_server.py`'s `register_function` decorator originally accepted
