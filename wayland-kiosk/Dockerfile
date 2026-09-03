@@ -1,5 +1,20 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
+# Stays on :latest (Alpine edge), not a pinned stable release: the Cage
+# build below requires wlroots0.20-dev, which only exists in Alpine edge's
+# package index, not in any pinned stable branch (verified against
+# pkgs.alpinelinux.org). See docs/decisions.md.
+ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
 FROM ${BUILD_FROM}
+
+ARG BUILD_VERSION
+ARG BUILD_ARCH
+LABEL \
+    io.hass.version="${BUILD_VERSION}" \
+    io.hass.type="app" \
+    io.hass.arch="${BUILD_ARCH}"
+
+# Pull current package-level security patches before installing anything;
+# see docs/security.md.
+RUN apk upgrade --no-cache
 
 # Install Cage, Chromium, Wayland tools, and Python environment.
 # mesa-va-gallium supplies radeonsi_drv_video.so so Chromium can decode
@@ -28,17 +43,15 @@ RUN apk add --no-cache \
     xwayland \
     curl \
     python3 \
-    py3-pip \
-    py3-requests \
-    py3-aiohttp
+    py3-pip
 
-# Cage only transforms touchscreen coordinates after the input device has
-# been mapped to an output. USB panels commonly omit the WL_OUTPUT udev
-# property, and Home Assistant OS exposes its host udev database read-only
-# to add-ons. Build a pinned Cage with a narrow patch that maps unassigned
-# inputs to the connector supplied through CAGE_TOUCH_OUTPUT once that
-# output is initialized. The upstream Alpine cage package remains installed
-# so it owns all matching runtime dependencies.
+# aiohttp via pip, not the py3-aiohttp apk package: Alpine's packaged version
+# lags behind aiohttp's own fixed releases (see docs/security.md). py3-pip
+# is already installed above.
+RUN pip install --no-cache-dir --break-system-packages aiohttp
+
+# Build a pinned Cage with a touch-to-output mapping patch; see docs/design.md.
+# The upstream Alpine cage package stays installed so it owns runtime deps.
 ARG CAGE_VERSION=0.3.1
 ARG CAGE_SHA512=b220767df979e4315233643d8285c9a26925684f95ef1d0c3ad87e05042598c33e630ba960a5569e3ee971a2e86ff0f44ac7361f03dcc5dee78995faa8fa1189
 COPY cage-map-unassigned-input.patch /tmp/cage-map-unassigned-input.patch

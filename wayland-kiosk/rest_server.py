@@ -15,29 +15,15 @@ WATCHDOG_FINAL_TIMEOUT = 30
 WATCHDOG_FAILURE_LIMIT = 3
 WATCHDOG_INTERVAL = 30
 
-# Serialize page-target CDP sessions. API-triggered reload/navigation commands
-# and the watchdog previously opened competing target WebSockets, which could
-# make a healthy but busy renderer miss the watchdog's five-second deadline.
+# CDP calls are serialized; see docs/design.md.
 CDP_LOCK = asyncio.Lock()
 
-# The output the display_on/display_off endpoints act on. wlr-randr has NO
-# wildcard support ("--output *" fails with "unknown output *" -- an earlier
-# version did exactly that, so these endpoints never worked). run.sh exports
-# the discovered connector name (e.g. "DP-1") before launching this server.
+# wlr-randr has no wildcard support; run.sh exports the real connector name.
 KIOSK_OUTPUT = os.environ.get("KIOSK_OUTPUT", "")
 
-# Commands the wlr_randr / refresh / display endpoints are allowed to
-# execute. execute_command() runs via asyncio.create_subprocess_exec, which
-# never invokes a shell -- so there is no shell-metacharacter injection risk
-# regardless of what's in `args`. The whitelist below is the actual
-# protection: even a caller who can hit this API (see auth check in
-# api_handler) can only ever run one of these binaries, with argv passed
-# through untouched.
+# Command whitelist enforced by execute_command/start_background_command;
+# see docs/security.md.
 ALLOWED_COMMANDS = {"wlr-randr", "wtype", "killall", "swayidle"}
-
-# --------------------------------------------------------------------------- #
-# OPTIONS / SHARED-SECRET AUTH
-# --------------------------------------------------------------------------- #
 
 def load_options() -> Dict[str, Any]:
     try:
@@ -50,19 +36,13 @@ def load_options() -> Dict[str, Any]:
 OPTIONS = load_options()
 API_TOKEN: Optional[str] = OPTIONS.get("api_token") or None
 
-# --------------------------------------------------------------------------- #
 # SERVER ROUTING
-# --------------------------------------------------------------------------- #
 ROUTES = {}
 
 
 def register_function(name, optional=None, required=None, validators=None):
     """Registers a function into ROUTES, enforcing required fields and
-    per-field validators before the handler ever runs. Previously this
-    decorator accepted required/validators but did nothing with them, so a
-    request missing a required field raised a raw KeyError inside the
-    handler that leaked as an opaque 500 -- this wires that enforcement up
-    for real."""
+    per-field validators before the handler ever runs."""
     required = required or []
     validators = validators or {}
 
@@ -201,9 +181,7 @@ async def chromium_watchdog():
                 result.get("error", "unknown CDP failure"),
             )
 
-            # A reload is less disruptive than restarting Cage and the whole
-            # container. If the old renderer has crashed, Chromium can create a
-            # fresh one while preserving the kiosk profile and login session.
+            # A reload is less disruptive than a full container restart.
             if failures == WATCHDOG_FAILURE_LIMIT - 1:
                 reload_result = await cdp_page_command(
                     "Page.reload",
@@ -217,8 +195,7 @@ async def chromium_watchdog():
                     )
 
             if failures >= WATCHDOG_FAILURE_LIMIT:
-                # One longer confirmation prevents a transiently busy dashboard
-                # or camera decoder from being mistaken for a permanent freeze.
+                # Longer confirmation avoids mistaking a busy renderer for a freeze.
                 final_result = await cdp_page_command(
                     "Runtime.evaluate",
                     {"expression": "1", "returnByValue": True},
@@ -246,9 +223,7 @@ async def chromium_watchdog():
 
         await asyncio.sleep(WATCHDOG_INTERVAL)
 
-# --------------------------------------------------------------------------- #
 # WAYLAND API ENDPOINTS
-# --------------------------------------------------------------------------- #
 
 @register_function("refresh_browser")
 async def handle_refresh_browser(data: Payload) -> Dict[str, Any]:
@@ -317,9 +292,7 @@ async def handle_display_off(data: Payload) -> Dict[str, Any]:
 
 @register_function("wlr_randr", required=["args"])
 async def handle_wlr_randr(data: Payload) -> Dict[str, Any]:
-    """Run a whitelisted wlr-randr command. `args` is split with shlex and
-    passed straight to execve() via create_subprocess_exec -- there is no
-    shell involved, so there's nothing for shell metacharacters to do."""
+    """Run a whitelisted wlr-randr command; see docs/security.md."""
     args = data["args"]
     try:
         args_list = shlex.split(args)
@@ -341,9 +314,7 @@ async def handle_launch_url(data: Payload) -> Dict[str, Any]:
         result["url"] = url
     return result
 
-# --------------------------------------------------------------------------- #
 # SERVER INITIALIZATION & WATCHDOG EXECUTION
-# --------------------------------------------------------------------------- #
 
 
 async def api_handler(request):
@@ -391,12 +362,7 @@ async def main():
     runner = web.AppRunner(app)
     await runner.setup()
 
-    # Bind to loopback only. This API can redirect the kiosk browser and
-    # power the physical display off/on -- with host_network: true in
-    # config.yaml, binding to 0.0.0.0 would expose it to the entire local
-    # network, not just this container/host. If you need to call this from
-    # another host, use HA automations via Supervisor/Core rather than
-    # widening this bind address.
+    # Loopback bind is the security boundary here; see docs/security.md.
     site = web.TCPSite(runner, '127.0.0.1', 8034, reuse_address=True)
     await site.start()
 

@@ -1,0 +1,85 @@
+# Static and dependency security checks on every push and pull request plus
+# a weekly run for new advisories. Each job is a required status check on
+# main. This repository has no frontend, so there is no frontend-security
+# job and CodeQL only scans python.
+name: Security
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: github/codeql-action/init@fddeee1a7ece751b577e409a89057319e3172939 # v4
+        with:
+          languages: python
+          build-mode: none
+      - uses: github/codeql-action/analyze@fddeee1a7ece751b577e409a89057319e3172939 # v4
+        with:
+          category: "/language:python"
+
+  python-security:
+    name: Python static security checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install pinned scanner
+        run: pip install "bandit==1.8.6"
+      - name: Bandit medium/high findings
+        run: bandit -q -r wayland-kiosk/rest_server.py -ll
+
+  shell-security:
+    name: ShellCheck app scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # severity=error: the existing warning/info findings (an unused loop
+      # counter, ls|grep, a subshell WAYLAND_DISPLAY export -- deliberate,
+      # see docs/operations.md) are pre-existing and not real bugs; only a
+      # genuine ShellCheck error should block CI.
+      - name: Check shell programs
+        run: shellcheck --shell=bash --severity=error --exclude=SC1091 wayland-kiosk/run.sh wayland-kiosk/launch-browser.sh
+
+  app-image-security:
+    name: App image build and vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the app image
+        run: docker build --tag local/app-kiosk:${{ github.sha }} wayland-kiosk
+      # only-fixed: true, unlike the generic template's false. This image
+      # bundles Chromium and ffmpeg, which between them always carry a large
+      # backlog of disclosed CVEs with no upstream fix packaged yet; failing
+      # on every one of those would permanently block CI rather than catch
+      # anything actionable. only-fixed narrows the gate to "a fix exists
+      # and we have not applied it", which is what this job can actually act
+      # on. .grype.yaml (repo root) ignores a further, specific set of
+      # fixed-but-not-by-us findings baked into the base image's own Go
+      # binaries; see docs/security.md.
+      - name: Scan installed OS packages
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: local/app-kiosk:${{ github.sha }}
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
+          grype-version: v0.110.0

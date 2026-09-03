@@ -1,8 +1,6 @@
 ---
 display-kiosk:
-  # =======================================================
-  # Global Backgrounds & Borders
-  # =======================================================
+  # Global backgrounds & borders
   lovelace-background: "#000000"
   ha-card-background: "#000000"
   card-background-color: "#000000"
@@ -14,18 +12,14 @@ display-kiosk:
   ha-dialog-border-radius: "0px"
   ha-card-border-width: "0px"
 
-  # =======================================================
-  # Section & Grid Spacing (Custom Add)
-  # =======================================================
+  # Section & grid spacing (custom add)
   ha-view-sections-column-min-width: "200px"
   ha-view-sections-column-gap: "2px"
   ha-view-sections-row-gap: "2px"
   ha-section-grid-column-gap: "2px"
   ha-section-grid-row-gap: "2px"
 
-  # =======================================================
-  # Popup / Dialog Kiosk Fixes (No Compositor / Blur)
-  # =======================================================
+  # Popup/dialog kiosk fixes (no compositor/blur)
   dialog-backdrop-filter: "none"
   iron-overlay-backdrop-background-color: "rgba(0, 0, 0, 0.9)"
   iron-overlay-backdrop-opacity: "1"
@@ -34,9 +28,7 @@ display-kiosk:
   mdc-theme-surface: "var(--card-background-color)"
   mdc-dialog-box-shadow: "none"
 
-  # =======================================================
-  # Modern Material 3 Dialog Fixes (HA Core 2024+)
-  # =======================================================
+  # Material 3 dialog fixes (HA Core 2024+)
   md-sys-color-surface: "#000000"
   md-sys-color-surface-container: "#000000"
   md-sys-color-surface-container-high: "#121212"
@@ -48,9 +40,7 @@ display-kiosk:
   ha-more-info-app-toolbar-background-color: "#000000"
   ha-more-info-app-toolbar-color: "#DDDDDD"
 
-  # =======================================================
-  # Card-Mod Integration
-  # =======================================================
+  # Card-mod integration
   card-mod-theme: "minimalist-DisplayPi"
 
   modes:

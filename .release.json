@@ -1,0 +1,8 @@
+{
+  "tag_prefix": "v",
+  "timezone": "America/Chicago",
+  "release_paths": ["wayland-kiosk"],
+  "version_fields": [
+    {"path": "wayland-kiosk/config.yaml", "kind": "regex", "pattern": "^version:\\s*\"([^\"]+)\"", "template": "version: \"{version}\""}
+  ]
+}
