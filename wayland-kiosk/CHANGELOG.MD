@@ -2,6 +2,23 @@
 ## KNOWN ISSUES
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
 
+## 2026.09.03.1
+- Migrate build.yaml to the Dockerfile (build.yaml is retired since the
+  2026-04-02 builder migration); BUILD_FROM stays on the generic
+  `base:latest` tag, which tracks Alpine edge -- the Cage build needs
+  wlroots0.20-dev, which does not exist on a pinned stable Alpine branch.
+- Fix: aiohttp installed via pip instead of the apk py3-aiohttp package,
+  which was pinned to a version with a published High-severity fix.
+  Dropped py3-requests, which was never imported.
+- Add apk upgrade before installing packages so the image picks up current
+  Alpine security patches.
+- Add CI: Test, Validate, and Security workflows (syntax/lint, Dockerfile
+  lint, CodeQL, bandit, ShellCheck, and a Grype image scan scoped to
+  findings with an available fix), plus a Release workflow that tags and
+  publishes a GitHub Release on merge to main.
+- Move long code comments into docs/ (design, operations, security,
+  decisions); see docs/README.md.
+
 ## 2026.09.01.4
 - Fix: prevent Chromium watchdog false-positive restarts. CDP commands are
   serialized, renderer checks have a 15-second deadline, a page reload is
