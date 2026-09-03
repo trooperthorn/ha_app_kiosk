@@ -209,6 +209,7 @@ This add-on spins up a background API server allowing you to control the screen 
 * `display_off`: Powers down the monitor output via `wlr-randr`.
 * `refresh_browser`: Triggers an active reload of the Chromium dashboard.
 * `launch_url`: Uses the Chrome DevTools Protocol to seamlessly navigate to a new page.
+* `screenshot`: Returns a base64-encoded PNG of whatever is currently on screen.
 
 The `api_token` option is a shared secret belonging only to this kiosk app.
 Do not paste a Home Assistant long-lived access token into it. When the option
@@ -221,3 +222,19 @@ Authorization: Bearer <your kiosk control API token>
 Because the API listens only on loopback, it cannot be reached directly from
 the LAN. With `host_network: true`, Home Assistant Core and other host-local
 processes can reach it.
+
+### Monitoring endpoint
+
+`GET http://<host>:8034/api/health` (no token required) reports app uptime,
+whether the monitor is currently on, whether the dashboard is paused for
+power saving, and whether Chromium is responding, as plain JSON. Point an
+uptime check or a Home Assistant `rest` sensor at it without handling the
+control API's token.
+
+### Power saving while the screen is off
+
+Whenever the monitor goes dark, however that happened -- the configured
+`screen_timeout`, a `display_off` call, or a `timeout` set through
+`display_on` -- the app also pauses the Chromium page's rendering and
+timers until the screen comes back on. This is transparent: the dashboard
+resumes live the moment the display wakes.

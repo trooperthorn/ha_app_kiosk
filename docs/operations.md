@@ -142,5 +142,38 @@ to 10 if that leaves an empty string) before using it as a loop bound.
 - `is_display_on` -- reports whether `wlr-randr` shows the output enabled.
 - `wlr_randr` -- runs an arbitrary whitelisted `wlr-randr` invocation with
   caller-supplied arguments (see `docs/security.md` for the whitelist).
+- `screenshot` -- captures the current Chromium frame via CDP
+  `Page.captureScreenshot` and returns it as a base64-encoded PNG in the
+  JSON response (`{"format": "png", "data": "..."}`), rather than as a
+  separate binary route, to keep every command behind the same single
+  POST endpoint and token check.
+
+A separate unauthenticated `GET /api/health` route reports
+`app_uptime_seconds`, `display_on`, `display_frozen`, and
+`chromium_responsive` for external monitoring that cannot do a token
+exchange; see `docs/security.md` for why this one route skips the check.
 
 See `docs/security.md` for the authentication and network-exposure model.
+
+## Freezing Chromium while the output is blanked
+
+`display_freeze_watcher` in `rest_server.py` polls `wlr-randr` every two
+seconds and calls CDP `Page.setWebLifecycleState` to flip the page between
+`active` and `frozen` as the output's power state changes. Polling was
+chosen over hooking the transition points directly because the output can
+go dark through three independent paths that don't share code: run.sh's
+static `swayidle` process (driven by the `screen_timeout` option),
+a second `swayidle` process started by `display_on`'s `timeout` argument,
+and a direct `display_off` or `wlr_randr --off` call. None of those paths
+know about `rest_server.py`; polling the one thing they all change
+(the output's actual power state) catches all three without needing a
+callback into every blanking mechanism.
+
+A frozen page stops rendering and pauses its JS timers, which is what
+turns idle-behind-a-blanked-output from full CPU/GPU load into near zero
+-- the same effect Kiosk Satellite's screensaver-pause measures on
+Android. It also means the page legitimately stops responding to
+`chromium_watchdog`'s `Runtime.evaluate` liveness check by design, so the
+watchdog checks `RUNTIME_STATE["display_frozen"]` first and skips its
+check entirely while frozen, rather than treating an intentionally paused
+page as a hang and restarting the container.

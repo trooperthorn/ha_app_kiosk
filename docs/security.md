@@ -45,6 +45,28 @@ which splits caller-supplied `args` with `shlex.split` and passes the
 result straight through to `execve()` as argv -- a caller who can reach the
 API can only ever run one of the four whitelisted binaries.
 
+## `/api/health` is deliberately unauthenticated
+
+`GET /api/health` is the one route on the REST control API (`docs/operations.md`)
+that skips the `api_token` check. It returns only read-only status --
+process uptime, whether the output is on, whether the page is currently
+frozen for power saving, and whether the Chromium watchdog considers the
+renderer responsive -- never anything from the `ALLOWED_COMMANDS`
+whitelist. The same loopback bind that scopes the rest of the API scopes
+this route too: it is reachable only from this container and, because
+`config.yaml` sets `host_network: true`, other processes on the same
+host. A monitoring tool that only needs to know the kiosk is alive should
+poll this route rather than being handed a copy of `api_token`.
+
+## Screenshot command returns dashboard content
+
+The `screenshot` command captures whatever is currently rendered --
+which, on this app, is the live Home Assistant dashboard -- and returns
+it as base64 image data in the JSON response. It goes through the same
+`api_token` check as every other command; there is no separate exposure
+here beyond what a caller who can already run `launch_url` or
+`refresh_browser` could see by other means.
+
 ## Device permissions: explicit nodes, not `full_access`
 
 `config.yaml` lists individual device nodes under `devices:`
