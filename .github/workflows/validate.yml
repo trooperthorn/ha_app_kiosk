@@ -1,8 +1,4 @@
-# Catches problems that would break the app store add before a release is
-# cut. Apps are not distributed through HACS (HACS does not handle apps),
-# so there is no hacs/action or hassfest job here; this repository's
-# validation is repository.yaml/config.yaml well-formedness plus a
-# Dockerfile lint.
+# App config and Dockerfile validation; apps are not distributed through HACS, so no hacs or hassfest job.
 name: Validate
 
 on:
@@ -41,10 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # failure-threshold: error, not the default warning. The style/warning
-      # findings here (untagged ARG-resolved FROM, unpinned apk versions) are
-      # pre-existing and not being fixed as part of this baseline; only a
-      # genuine hadolint error should block CI.
+      # Only genuine errors block; see docs/operations.md "CI gate thresholds".
       - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: wayland-kiosk/Dockerfile
