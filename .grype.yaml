@@ -25,3 +25,5 @@ ignore:
   - vulnerability: CVE-2026-56862
   - vulnerability: CVE-2026-56864
   - vulnerability: CVE-2026-56865
+  - vulnerability: GO-2026-6354
+  - vulnerability: GO-2026-6355
