@@ -1,7 +1,4 @@
-# This repository ships an app with no automated pytest suite (no Python
-# package, no frontend bundle). "Test" here means: source parses/lints
-# cleanly, and the app image actually builds. release.yml calls this
-# workflow so the same checks gate every GitHub Release.
+# Syntax, lint, and image build gate; release.yml calls it so the same checks gate every release.
 name: Test
 
 on:

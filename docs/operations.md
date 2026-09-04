@@ -177,3 +177,19 @@ Android. It also means the page legitimately stops responding to
 watchdog checks `RUNTIME_STATE["display_frozen"]` first and skips its
 check entirely while frozen, rather than treating an intentionally paused
 page as a hang and restarting the container.
+
+## CI gate thresholds
+
+ShellCheck in `security.yml` runs with `--severity=error`. The warning and
+info findings it would otherwise report (an unused loop counter, an `ls |
+grep` pipeline, a `WAYLAND_DISPLAY` export inside a subshell) are deliberate
+or harmless and predate the gate; only a genuine error should block a merge.
+`SC1091` is excluded because the scripts source bashio files that are not in
+the repository.
+
+hadolint in `validate.yml` runs with `failure-threshold: error`. Its style and
+warning findings (an untagged `FROM` resolved from a build argument, apk
+packages without pinned versions) are known and not being changed as part of
+the release baseline; the base image decision in `decisions.md` explains the
+tag choice. The Grype scope for the image scan is described in `security.md`.
+

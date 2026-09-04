@@ -1,11 +1,4 @@
-# Reconciles the version on main into a verifiable GitHub Release. A normal
-# merge is the release trigger: nobody creates or pushes tags by hand.
-# Reruns are safe; an already-published version is left immutable.
-#
-# This app is installed from the tagged source tree (Supervisor builds the
-# image locally on the user's host; see docs/README.md), not as a HACS zip,
-# so there is no archive, SBOM, or attestation step here -- only version
-# validation, tag creation, and the GitHub Release itself.
+# A merge to main is the release trigger; see docs/operations.md.
 name: Release
 
 on:

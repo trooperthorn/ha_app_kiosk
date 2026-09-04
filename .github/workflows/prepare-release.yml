@@ -1,13 +1,4 @@
-# Turns release-bearing changes on protected main into a tested CalVer bump
-# PR. The Release workflow remains the sole tag and asset publisher.
-#
-# Requires a GitHub App installed on this repository with the
-# RELEASE_AUTOMATION_CLIENT_ID variable and RELEASE_AUTOMATION_PRIVATE_KEY
-# secret configured. Without them, this workflow fails cleanly at the
-# credentials check and the repository can still release manually: run
-# `python scripts/set_version.py --next-from-tags`, commit
-# `wayland-kiosk/config.yaml`, open a PR, and the merge to main publishes
-# through release.yml.
+# Turns release-bearing changes on protected main into a tested CalVer bump PR; see docs/operations.md.
 name: Prepare release
 
 on:

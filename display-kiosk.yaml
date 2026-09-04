@@ -45,7 +45,6 @@ display-kiosk:
 
   modes:
     dark:
-      # Text
       primary-text-color: "#DDDDDD"
       
       # Main interface colors
@@ -91,24 +90,16 @@ display-kiosk:
       card-background-color: "#000000"
       primary-background-color: "#000000"
       secondary-background-color: "#000000"
-
-      # Header
       app-header-text-color: "var(--primary-text-color)"
       app-header-background-color: "var(--primary-background-color)"
       paper-tabs-selection-bar-color: "var(--primary-text-color)"
-
-      # Sidebar
       sidebar-selected-text-color: "rgb(var(--color-blue))"
       sidebar-selected-icon-color: "rgb(var(--color-blue))"
-
-      # Slider
       slider-color: "rgb(var(--color-blue))"
       slider-bar-color: "rgba(var(--color-blue),0.38)"
 
       # Card
       box-shadow: "none"
-
-      # Media player
       mini-media-player-accent-color: "var(--google-blue)"
 
       # Journal
