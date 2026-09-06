@@ -25,6 +25,7 @@ chromium_args=(
     --disable-features=GCM
     --disable-dev-shm-usage
     --disable-session-crashed-bubble
+    --disable-pinch
     --hide-crash-restore-bubble
     --user-data-dir=/data/chromium-profile
 )

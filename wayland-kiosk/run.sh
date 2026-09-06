@@ -368,6 +368,8 @@ profile["exited_cleanly"] = True
 # 5 = RestoreOnStartup "open the New Tab page"; see docs/design.md.
 session = prefs.setdefault("session", {})
 session["restore_on_startup"] = 5
+# A zoom level persisted by an earlier session must not outlive a restart; see docs/operations.md.
+prefs.setdefault("partition", {})["per_host_zoom_levels"] = {}
 with open(path, "w") as f:
     json.dump(prefs, f)
 PYEOF

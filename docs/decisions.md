@@ -107,3 +107,17 @@ silently apply the wrong default; the fallbacks were changed to match.
 This class of bug motivated reading `/data/options.json` directly instead
 of depending on the Supervisor API at all (2026.09.01.1), see
 `docs/design.md`.
+
+## Touchscreen zoom blocked with `--disable-pinch`, not a page-level workaround (2026-09-06)
+
+A visitor could pinch the touchscreen and zoom the whole dashboard. Home
+Assistant's page already forbids user scaling in its viewport meta tag, so
+the zoom was not page-level: desktop Chromium implements touchscreen pinch
+in the compositor and ignores the meta tag there. Rejected: injecting CSS or
+JavaScript into the dashboard through the DevTools port to swallow touch
+events, because it would race the periodic refresh and depend on Home
+Assistant's markup. Rejected: `--force-device-scale-factor`, which sets a
+scale but does not stop the gesture. Chosen: Chromium's own
+`--disable-pinch` switch, whose behavior Chromium's kiosk browser test
+asserts, plus clearing `partition.per_host_zoom_levels` at startup so a zoom
+level already stored in the profile is not restored.
