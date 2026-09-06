@@ -58,6 +58,20 @@ chmod 0700 "$XDG_RUNTIME_DIR"
 # docs/operations.md.
 export HOME=/root
 
+# The Supervisor injects Home Assistant's time zone as TZ; make every lookup
+# path Chromium uses agree with it. See docs/operations.md.
+if [ -n "${TZ:-}" ]; then
+    if [ -f "/usr/share/zoneinfo/${TZ}" ]; then
+        ln -sf "/usr/share/zoneinfo/${TZ}" /etc/localtime
+        echo "$TZ" > /etc/timezone
+        bashio::log.info "Time zone from Home Assistant: ${TZ} (applied to /etc/localtime)."
+    else
+        bashio::log.warning "Time zone '${TZ}' from Home Assistant has no zoneinfo file; the browser may fall back to UTC."
+    fi
+else
+    bashio::log.warning "No TZ in the environment; the browser will use UTC unless the kiosk user's profile selects the server time zone."
+fi
+
 # Seat management (seatd)
 bashio::log.info "Starting seat management daemon..."
 export SEATD_SOCK=/run/seatd.sock
