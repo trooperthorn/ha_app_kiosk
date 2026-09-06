@@ -2,6 +2,11 @@
 ## KNOWN ISSUES
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
 
+## Unreleased
+- Fix: touchscreen pinch could zoom the whole dashboard. Chromium now starts
+  with `--disable-pinch`, and any zoom level persisted in the profile is
+  reset at startup. See docs/operations.md, Chromium launch flags.
+
 ## 2026.09.03.1
 - Migrate build.yaml to the Dockerfile (build.yaml is retired since the
   2026-04-02 builder migration); BUILD_FROM stays on the generic

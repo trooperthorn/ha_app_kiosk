@@ -120,6 +120,19 @@ used in addition to `--kiosk` because Cage maximizes its single application
 window, and `--app` removes tabs and the address bar even on Wayland builds
 that ignore Chromium's early fullscreen request.
 
+`--disable-pinch` turns off Chromium's compositor-level touchscreen pinch
+gesture. Home Assistant's own page already declares `user-scalable=no` in
+its viewport meta tag, which stops page-level pinch and double-tap zoom,
+but desktop Chromium implements touchscreen pinch in the compositor and
+that path ignores the viewport meta entirely, so a visitor could still zoom
+the whole dashboard. The switch is defined in Chromium's
+`components/input/switches.cc` and Chromium's own kiosk browser test
+(`kiosk_pinch_to_zoom_browsertest.cc`) asserts that no pinch gesture
+reaches the page while it is set. Keyboard and mouse-wheel zoom are not
+affected, which does not matter on a touch-only kiosk. The startup
+Preferences rewrite in `run.sh` also clears `partition.per_host_zoom_levels`
+so a zoom level persisted by an earlier session does not survive a restart.
+
 ## `login_delay` truncation
 
 `login_delay` is schema'd as `float(0,)`, so it may arrive as e.g. `"10.5"`.
