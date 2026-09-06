@@ -133,6 +133,28 @@ affected, which does not matter on a touch-only kiosk. The startup
 Preferences rewrite in `run.sh` also clears `partition.per_host_zoom_levels`
 so a zoom level persisted by an earlier session does not survive a restart.
 
+## Time zone handling
+
+The Supervisor injects Home Assistant's configured time zone into every
+add-on container as `TZ` (`supervisor/docker/app.py` builds the environment
+with `ENV_TIME: self.sys_timezone`), and Core pushes changes to the
+Supervisor on `EVENT_CORE_CONFIG_UPDATE`. The base image ships `tzdata`;
+the Dockerfile also lists it explicitly so the dependency is visible.
+`run.sh` applies `TZ` to `/etc/localtime` and `/etc/timezone` before anything
+else starts, because Chromium's ICU host-zone detection consults `TZ`, then
+`/etc/localtime`, then `/etc/timezone`, and making all three agree removes
+the container as a variable. The dashboard clock is still decided by the
+Home Assistant frontend: a user's profile Time zone setting defaults to
+`local` (the browser's `Intl` zone, see the frontend's
+`resolve-time-zone.ts`), and only `server` uses Home Assistant's zone
+directly. The user-facing guidance is in `wayland-kiosk/DOCS.md`.
+
+Unverified: whether the Alpine Chromium build resolved UTC on the physical
+kiosk before this change because of a missing `/etc/localtime`, because
+`TZ` was not reaching it, or because the profile was on `local`. The
+startup log line now records the zone the app applied, which narrows this
+on the next report.
+
 ## `login_delay` truncation
 
 `login_delay` is schema'd as `float(0,)`, so it may arrive as e.g. `"10.5"`.

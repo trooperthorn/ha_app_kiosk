@@ -73,6 +73,26 @@ trusted-networks authentication provider. If the Network settings UI
 requires at least one proxy entry even though `use_x_forwarded_for` is off,
 use an unused documentation address such as `192.0.2.1/32` instead.
 
+## Time and time zone
+
+The dashboard clock follows the Home Assistant user the kiosk is logged in
+as. Every user has a profile setting, Time zone, with two values: "Use your
+browser's time zone" (the default for a new user) and "Use server time zone".
+With the default, the clock shows whatever the kiosk's own browser believes,
+which is the container's time zone.
+
+The app inherits Home Assistant's configured time zone automatically: the
+Supervisor passes it to the container, and on startup the app applies it to
+every place Chromium looks (the `TZ` variable, `/etc/localtime`, and
+`/etc/timezone`), then logs the zone it applied. So with either profile
+setting the clock should match Settings, System, General, Time zone.
+
+If the clock still shows UTC, set the kiosk user's profile to "Use server
+time zone": it makes the browser irrelevant and is the right choice for a
+display that sits in the same house the server is configured for. Then check
+the app log for the "Time zone from Home Assistant" line; a warning there
+means the zone name had no matching zoneinfo file, which is worth reporting.
+
 ## Boot and reboot behavior
 
 The add-on is designed to survive a host reboot without intervention:

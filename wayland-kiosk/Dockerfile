@@ -42,6 +42,7 @@ RUN apk add --no-cache \
     swayidle \
     xwayland \
     curl \
+    tzdata \
     python3 \
     py3-pip
 

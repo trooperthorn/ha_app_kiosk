@@ -3,6 +3,12 @@
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
 
 ## Unreleased
+- Fix: the dashboard clock could show UTC. The app now applies the time zone
+  the Supervisor passes from Home Assistant to /etc/localtime and
+  /etc/timezone at startup and logs it; DOCS.md explains the per-user
+  profile setting that decides which zone the clock follows.
+
+## 2026.09.06.1
 - Fix: touchscreen pinch could zoom the whole dashboard. Chromium now starts
   with `--disable-pinch`, and any zoom level persisted in the profile is
   reset at startup. See docs/operations.md, Chromium launch flags.

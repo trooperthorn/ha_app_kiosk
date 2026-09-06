@@ -121,3 +121,15 @@ scale but does not stop the gesture. Chosen: Chromium's own
 `--disable-pinch` switch, whose behavior Chromium's kiosk browser test
 asserts, plus clearing `partition.per_host_zoom_levels` at startup so a zoom
 level already stored in the profile is not restored.
+
+## Time zone applied to /etc/localtime at startup, not left to TZ alone (2026-09-06)
+
+The Supervisor already passes Home Assistant's time zone as `TZ`, so in
+theory nothing was needed. The clock still showed UTC on a real kiosk and
+the cause could not be observed remotely, so the app now makes all three of
+Chromium's zone lookups agree and logs what it applied. Rejected: adding a
+`time_zone` option to config.yaml, because a second source of truth would
+drift from Home Assistant's setting, which the Supervisor already forwards.
+Rejected: forcing the kiosk user's profile to the server zone from the app,
+because the app has no supported way to write another user's frontend
+settings; the profile choice is documented instead.
