@@ -133,3 +133,21 @@ drift from Home Assistant's setting, which the Supervisor already forwards.
 Rejected: forcing the kiosk user's profile to the server zone from the app,
 because the app has no supported way to write another user's frontend
 settings; the profile choice is documented instead.
+
+## Dialog surface pinned in display-kiosk.yaml (2026-09-08)
+
+More-info popups rendered transparent over the dashboard. The 2026.8+
+frontend paints the `ha-dialog` panel with `ha-dialog-surface-background`
+and falls back to `card-background-color`, so any theme that makes cards
+transparent makes dialogs transparent as well. The theme now sets
+`ha-dialog-surface-background` explicitly. The scrim is controlled by
+`ha-dialog-scrim-backdrop-filter` (the frontend sets `brightness(68%)` on
+`html`, which shadows the older `dialog-backdrop-filter`) and
+`mdc-dialog-scrim-color`; the Polymer `iron-overlay-*` keys and
+`ha-dialog-background`, `dialog-background-color`, `mdc-dialog-box-shadow`
+are not read by the current dialog and were removed. `card-mod-theme` now
+names this theme so card-mod theme styles match the active theme. Verified
+live against frontend 20260826.6 by reading the dialog panel's computed
+background under each theme. The dialog uses the theme selected in the
+browser profile, not a view-level `theme:`, so the kiosk profile must
+select display-kiosk.

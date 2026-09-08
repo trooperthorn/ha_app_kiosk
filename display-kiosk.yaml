@@ -19,14 +19,14 @@ display-kiosk:
   ha-section-grid-column-gap: "2px"
   ha-section-grid-row-gap: "2px"
 
-  # Popup/dialog kiosk fixes (no compositor/blur)
-  dialog-backdrop-filter: "none"
-  iron-overlay-backdrop-background-color: "rgba(0, 0, 0, 0.9)"
-  iron-overlay-backdrop-opacity: "1"
-  ha-dialog-background: "var(--card-background-color)"
-  dialog-background-color: "var(--card-background-color)"
+  # Dialog surface and scrim (frontend 2026.8+, Web Awesome ha-dialog).
+  # The dialog panel falls back to card-background-color when
+  # ha-dialog-surface-background is unset, so pin it explicitly.
+  ha-dialog-surface-background: "#000000"
+  ha-dialog-scrim-backdrop-filter: "none"
+  mdc-dialog-scrim-color: "rgba(0, 0, 0, 0.9)"
+  dialog-box-shadow: "none"
   mdc-theme-surface: "var(--card-background-color)"
-  mdc-dialog-box-shadow: "none"
 
   # Material 3 dialog fixes (HA Core 2024+)
   md-sys-color-surface: "#000000"
@@ -41,7 +41,7 @@ display-kiosk:
   ha-more-info-app-toolbar-color: "#DDDDDD"
 
   # Card-mod integration
-  card-mod-theme: "minimalist-DisplayPi"
+  card-mod-theme: "display-kiosk"
 
   modes:
     dark:
