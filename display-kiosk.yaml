@@ -104,3 +104,81 @@ display-kiosk:
 
       # Journal
       state-icon-color: "rgb(var(--color-theme))"
+
+    light:
+      primary-text-color: "#212121"
+      secondary-text-color: "#5F5F5F"
+
+      # Main interface colors
+      primary-color: "#1A73E8"
+      google-red: "#D93025"
+      google-green: "#1E8E3E"
+      google-yellow: "#F9AB00"
+      google-blue: "#1A73E8"
+      google-violet: "#8430CE"
+      google-grey: "#5F5F5F"
+
+      # RGB Values for minimalist templates
+      color-red: "217, 48, 37"
+      color-green: "30, 142, 62"
+      color-yellow: "249, 171, 0"
+      color-blue: "26, 115, 232"
+      color-theme: "33, 33, 33"
+      color-purple: "132, 48, 206"
+      color-grey: "95, 95, 95"
+      color-pink: "233, 30, 99"
+
+      # Minimalist Background colors
+      color-background-yellow: "var(--color-yellow)"
+      color-background-blue: "var(--color-blue)"
+      color-background-green: "var(--color-green)"
+      color-background-red: "var(--color-red)"
+      color-background-pink: "var(--color-pink)"
+      color-background-purple: "var(--color-purple)"
+
+      # Minimalist Text colors
+      color-yellow-text: "var(--color-yellow)"
+      color-blue-text: "var(--color-blue)"
+      color-green-text: "var(--color-green)"
+      color-red-text: "var(--color-red)"
+      color-pink-text: "var(--color-pink)"
+      color-purple-text: "var(--color-purple)"
+      opacity-bg: "0.1"
+
+      # Floating button text color
+      mdc-theme-on-secondary: "var(--card-background-color)"
+
+      # Background overrides for light mode
+      lovelace-background: "#F5F5F5"
+      ha-card-background: "#FFFFFF"
+      card-background-color: "#FFFFFF"
+      primary-background-color: "#F5F5F5"
+      secondary-background-color: "#FFFFFF"
+      sidebar-background-color: "#F5F5F5"
+      app-header-text-color: "var(--primary-text-color)"
+      app-header-background-color: "var(--primary-background-color)"
+      app-header-edit-background-color: "#E0E0E0"
+      paper-tabs-selection-bar-color: "var(--primary-text-color)"
+      sidebar-selected-text-color: "rgb(var(--color-blue))"
+      sidebar-selected-icon-color: "rgb(var(--color-blue))"
+      slider-color: "rgb(var(--color-blue))"
+      slider-bar-color: "rgba(var(--color-blue),0.38)"
+
+      # Dialog surface and scrim
+      ha-dialog-surface-background: "#FFFFFF"
+      mdc-dialog-scrim-color: "rgba(255, 255, 255, 0.8)"
+      md-sys-color-surface: "#FFFFFF"
+      md-sys-color-surface-container: "#F5F5F5"
+      md-sys-color-surface-container-high: "#E0E0E0"
+      md-sys-color-surface-container-highest: "#CCCCCC"
+      md-sys-color-on-surface: "#212121"
+      md-sys-color-on-surface-variant: "#5F5F5F"
+      ha-more-info-app-toolbar-background-color: "#F5F5F5"
+      ha-more-info-app-toolbar-color: "#212121"
+
+      # Card
+      box-shadow: "none"
+      mini-media-player-accent-color: "var(--google-blue)"
+
+      # Journal
+      state-icon-color: "rgb(var(--color-theme))"

@@ -151,3 +151,14 @@ live against frontend 20260826.6 by reading the dialog panel's computed
 background under each theme. The dialog uses the theme selected in the
 browser profile, not a view-level `theme:`, so the kiosk profile must
 select display-kiosk.
+
+## Light mode block added to display-kiosk.yaml (2026-09-08)
+
+The theme declared only `modes: dark`. In a light-scheme browser Home
+Assistant then applied the black top-level backgrounds with its default
+light-mode text and card colors, which produced dark text on black and
+white card pills. A `light` block now mirrors the `display` theme's light
+palette (F5F5F5 surfaces, white cards and dialog surface, 212121 text)
+with light-safe minimalist RGB values, so both schemes are readable. The
+kiosk itself should still run dark; the light block exists for desktop
+and phone profiles that follow the system scheme.
