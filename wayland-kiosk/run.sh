@@ -140,6 +140,7 @@ HA_USERNAME=$(read_option 'ha_username' '')
 HA_PASSWORD=$(read_option 'ha_password' '')
 LOGIN_DELAY=$(read_option 'login_delay' '10')
 IGNORE_CERTIFICATE_ERRORS=$(read_option 'ignore_certificate_errors' 'true')
+LOCK_NAVIGATION=$(read_option 'lock_navigation' 'false')
 
 # Append the dashboard path (default "lovelace", HA's Overview page).
 if [ -n "$HA_DASHBOARD" ]; then
@@ -150,6 +151,95 @@ if [ -n "$HA_DASHBOARD" ]; then
     esac
 fi
 bashio::log.info "Kiosk will load: ${URL}"
+
+# rest_server.py is started further down and inherits the environment as it
+# stands at that point, so KIOSK_URL and the lockdown flag have to be
+# exported here rather than with the other Chromium exports at the bottom.
+export KIOSK_URL="$URL"
+export KIOSK_LOCK_NAVIGATION="$LOCK_NAVIGATION"
+
+# Navigation lockdown. Chromium reads managed policy from disk only at
+# startup, so the file is written before Cage launches the browser; see
+# docs/design.md. All three directories are written because the path depends
+# on how the Chromium package was built.
+CHROMIUM_POLICY_DIRS="/etc/chromium/policies/managed /etc/chromium-browser/policies/managed /etc/opt/chrome/policies/managed"
+CHROMIUM_POLICY_NAME="kiosk-lockdown.json"
+
+# Always clear a policy left by a previous run first, so turning the option
+# back off actually unlocks the browser.
+for policy_dir in $CHROMIUM_POLICY_DIRS; do
+    rm -f "${policy_dir}/${CHROMIUM_POLICY_NAME}" 2>/dev/null || true
+done
+
+KIOSK_ORIGIN=$(python3 - "$URL" <<'ORIGINEOF'
+import sys
+from urllib.parse import urlsplit
+
+parts = urlsplit(sys.argv[1])
+if parts.scheme and parts.netloc:
+    # Any credentials in the URL are not part of a policy pattern.
+    print("%s://%s" % (parts.scheme, parts.netloc.rsplit("@", 1)[-1]))
+ORIGINEOF
+)
+
+if bashio::var.true "$LOCK_NAVIGATION"; then
+    if [ -z "$KIOSK_ORIGIN" ]; then
+        bashio::log.error "lock_navigation is on but '${URL}' has no usable scheme and host -- no Chromium policy was written and the browser stays unrestricted."
+    else
+        for policy_dir in $CHROMIUM_POLICY_DIRS; do
+            mkdir -p "$policy_dir"
+        done
+        if python3 - "$KIOSK_ORIGIN" "$CHROMIUM_POLICY_NAME" $CHROMIUM_POLICY_DIRS <<'POLICYEOF'
+import json
+import os
+import sys
+
+origin, policy_name = sys.argv[1:3]
+policy = {
+    # Block every URL, then re-allow exactly the Home Assistant origin. The
+    # allowlist entry carries no path, so every dashboard, the auth flow and
+    # the frontend's own assets keep working, while anything else -- another
+    # host, a file:// URL, chrome:// pages -- is refused by the browser
+    # itself rather than by anything this app has to police at runtime.
+    "URLBlocklist": ["*"],
+    "URLAllowlist": [origin],
+    # A second window on a kiosk cannot be closed without a keyboard.
+    "DefaultPopupsSetting": 2,
+    "IncognitoModeAvailability": 1,
+    "BrowserSignin": 0,
+    "SyncDisabled": True,
+    "DefaultSearchProviderEnabled": False,
+    "PasswordManagerEnabled": False,
+    "AutofillAddressEnabled": False,
+    "AutofillCreditCardEnabled": False,
+    "BookmarkBarEnabled": False,
+    "EditBookmarksEnabled": False,
+    "TranslateEnabled": False,
+    "PrintingEnabled": False,
+    "PromptForDownloadLocation": False,
+    "DownloadRestrictions": 3,  # 3 = block every download
+    "AllowFileSelectionDialogs": False,
+    "AllowDinosaurEasterEgg": False,
+}
+# DeveloperToolsAvailability is deliberately absent: this app drives Chromium
+# over the DevTools protocol for the watchdog, screenshots and refresh. See
+# docs/decisions.md.
+payload = json.dumps(policy, indent=2) + "\n"
+for directory in sys.argv[3:]:
+    path = os.path.join(directory, policy_name)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(payload)
+    os.chmod(path, 0o644)
+POLICYEOF
+        then
+            bashio::log.info "Navigation lockdown ON: Chromium may only load ${KIOSK_ORIGIN}; every other URL is blocked by managed policy."
+        else
+            bashio::log.error "Failed to write the Chromium lockdown policy -- the browser is starting UNRESTRICTED."
+        fi
+    fi
+else
+    bashio::log.info "Navigation lockdown OFF: the browser can follow links off ${KIOSK_ORIGIN:-the dashboard}. Set lock_navigation to true to pin it to that origin."
+fi
 
 # Dynamic hardware discovery (display & touch). Static fallbacks below are
 # used only if auto-discovery fails.
@@ -398,7 +488,6 @@ if [ ! -x "$CHROMIUM_BIN" ]; then
     CHROMIUM_BIN="chromium-browser"
 fi
 export CHROME_DESKTOP="chromium.desktop"
-export KIOSK_URL="$URL"
 export KIOSK_ROTATION="$ROTATION_CONFIG"
 export KIOSK_ROTATION_TRANSFORM="$ROTATION_DEGREES"
 export KIOSK_CHROMIUM_BIN="$CHROMIUM_BIN"

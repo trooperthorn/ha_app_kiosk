@@ -6,6 +6,7 @@ import time
 import urllib.request
 import json
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 # Type alias for your payload
@@ -33,6 +34,13 @@ CDP_LOCK = asyncio.Lock()
 # wlr-randr has no wildcard support; run.sh exports the real connector name.
 KIOSK_OUTPUT = os.environ.get("KIOSK_OUTPUT", "")
 
+# The fully assembled dashboard URL (ha_url + ha_dashboard) exported by run.sh.
+KIOSK_URL = os.environ.get("KIOSK_URL", "")
+# Mirrors the Chromium managed policy run.sh writes; see docs/security.md.
+NAVIGATION_LOCKED = os.environ.get("KIOSK_LOCK_NAVIGATION", "") == "true"
+# A blocked auth redirect would just bounce back here every cycle.
+RETURN_EXEMPT_PREFIXES = ("/auth/",)
+
 # Command whitelist enforced by execute_command/start_background_command;
 # see docs/security.md.
 ALLOWED_COMMANDS = {"wlr-randr", "wtype", "killall", "swayidle"}
@@ -47,6 +55,11 @@ def load_options() -> Dict[str, Any]:
 
 OPTIONS = load_options()
 API_TOKEN: Optional[str] = OPTIONS.get("api_token") or None
+
+try:
+    RETURN_TO_DASHBOARD = int(OPTIONS.get("return_to_dashboard") or 0)
+except (TypeError, ValueError):
+    RETURN_TO_DASHBOARD = 0
 
 # SERVER ROUTING
 ROUTES = {}
@@ -127,6 +140,14 @@ async def start_background_command(cmd_list, log_prefix=""):
         return {"success": False, "error": str(exc)}
 
 
+def read_cdp_targets(timeout: float = SHORT_TIMEOUT):
+    """Read Chromium's DevTools target list. Blocking; call in a thread."""
+    with urllib.request.urlopen(
+        "http://127.0.0.1:9222/json", timeout=timeout
+    ) as response:
+        return json.loads(response.read())
+
+
 async def cdp_page_command(
     method: str,
     params: Optional[Dict[str, Any]] = None,
@@ -136,14 +157,9 @@ async def cdp_page_command(
     """Send one serialized command to the first Chromium page target."""
     try:
         async with CDP_LOCK:
-            def _targets():
-                with urllib.request.urlopen(
-                    "http://127.0.0.1:9222/json",
-                    timeout=min(timeout, SHORT_TIMEOUT),
-                ) as response:
-                    return json.loads(response.read())
-
-            targets = await asyncio.to_thread(_targets)
+            targets = await asyncio.to_thread(
+                read_cdp_targets, min(timeout, SHORT_TIMEOUT)
+            )
             page = next((target for target in targets if target.get("type") == "page"), None)
             if not page or not page.get("webSocketDebuggerUrl"):
                 return {"success": False, "error": "No Chromium page target found"}
@@ -175,6 +191,42 @@ async def cdp_page_command(
         if log_failure:
             logging.exception("CDP command %s failed", method)
         return {"success": False, "error": str(exc)}
+
+
+def same_origin(url: str, reference: str) -> bool:
+    """True when both URLs share a scheme, host and port."""
+    left, right = urlsplit(url), urlsplit(reference)
+    return (left.scheme, left.netloc.rsplit("@", 1)[-1]) == (
+        right.scheme,
+        right.netloc.rsplit("@", 1)[-1],
+    )
+
+
+def on_dashboard(url: str) -> bool:
+    """True when the page is still somewhere inside the kiosk dashboard.
+
+    Sub-views such as /lovelace/kitchen count as the dashboard: bouncing a
+    wall panel back to the first view every cycle would be a bug, not
+    lockdown. Only leaving the dashboard's own path counts as wandering.
+    """
+    if not KIOSK_URL or not url:
+        return True
+    if not same_origin(url, KIOSK_URL):
+        return False
+    path = urlsplit(url).path.rstrip("/")
+    if path.startswith(RETURN_EXEMPT_PREFIXES):
+        return True
+    home = urlsplit(KIOSK_URL).path.rstrip("/")
+    return path == home or path.startswith(home + "/")
+
+
+async def current_page_url() -> Optional[str]:
+    """URL of the first Chromium page target, or None if it cannot be read."""
+    try:
+        targets = await asyncio.to_thread(read_cdp_targets)
+    except Exception:
+        return None
+    return next((t.get("url", "") for t in targets if t.get("type") == "page"), None)
 
 
 # CHROME WATCHDOG
@@ -290,6 +342,49 @@ async def display_freeze_watcher():
 
         await asyncio.sleep(DISPLAY_POLL_INTERVAL)
 
+
+async def dashboard_return_watcher():
+    """Send the browser home after it has wandered off the dashboard.
+
+    The Chromium policy stops navigation to another host, but Home Assistant
+    is a single-page app: moving from the dashboard to Settings or Developer
+    tools is client-side routing, which no URL policy can see. Polling the
+    current page and navigating back is the only thing that covers it; the
+    real fix for a shared panel is a non-admin Home Assistant user, and
+    docs/security.md says so.
+    """
+    if RETURN_TO_DASHBOARD <= 0:
+        return
+    if not KIOSK_URL:
+        logging.warning(
+            "return_to_dashboard is set but KIOSK_URL is not in the environment; "
+            "the dashboard return watcher was NOT started."
+        )
+        return
+
+    logging.info(
+        "Dashboard return watcher: checking every %ds, home is %s",
+        RETURN_TO_DASHBOARD,
+        KIOSK_URL,
+    )
+    while True:
+        await asyncio.sleep(RETURN_TO_DASHBOARD)
+        # A blanked screen has a frozen page lifecycle; navigating it would
+        # only fight display_freeze_watcher.
+        if RUNTIME_STATE["display_frozen"]:
+            continue
+        url = await current_page_url()
+        if url is None or on_dashboard(url):
+            continue
+        logging.info("Dashboard return watcher: page is at %s, navigating home.", url)
+        result = await cdp_page_command("Page.navigate", {"url": KIOSK_URL})
+        if not result["success"]:
+            logging.warning(
+                "Dashboard return watcher: navigation home failed: %s",
+                result.get("error"),
+            )
+
+
 # WAYLAND API ENDPOINTS
 
 @register_function("refresh_browser")
@@ -383,6 +478,23 @@ async def handle_launch_url(data: Payload) -> Dict[str, Any]:
     url = str(data["url"]) if data.get("url") else str(OPTIONS.get("ha_url") or "http://127.0.0.1:8123")
     if url != "about:blank" and not url.startswith(("http://", "https://")):
         url = "http://" + url
+    # Chromium would refuse this anyway once lock_navigation is on; refusing
+    # it here turns a silently blocked page into an answer the caller can act
+    # on. See docs/security.md.
+    if (
+        NAVIGATION_LOCKED
+        and KIOSK_URL
+        and url != "about:blank"
+        and not same_origin(url, KIOSK_URL)
+    ):
+        return {
+            "success": False,
+            "error": (
+                "lock_navigation is enabled; only URLs on "
+                f"{urlsplit(KIOSK_URL).scheme}://{urlsplit(KIOSK_URL).netloc} "
+                "can be loaded."
+            ),
+        }
     result = await cdp_page_command("Page.navigate", {"url": url})
     if result["success"]:
         result["url"] = url
@@ -426,6 +538,7 @@ async def health_handler(request):
         "display_on": RUNTIME_STATE["display_on"],
         "display_frozen": RUNTIME_STATE["display_frozen"],
         "chromium_responsive": RUNTIME_STATE["chromium_responsive"],
+        "navigation_locked": NAVIGATION_LOCKED,
     })
 
 
@@ -443,6 +556,7 @@ async def main():
     logging.info("Chromium Watchdog initialized.")
     asyncio.create_task(display_freeze_watcher())
     logging.info("Display freeze watcher initialized.")
+    asyncio.create_task(dashboard_return_watcher())
 
     app = web.Application()
     app.router.add_post('/api', api_handler)
