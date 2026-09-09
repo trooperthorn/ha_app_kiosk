@@ -34,6 +34,13 @@ if [ "$KIOSK_IGNORE_CERTIFICATE_ERRORS" = "true" ]; then
     chromium_args+=(--ignore-certificate-errors)
 fi
 
+# Navigation lockdown is enforced by the managed policy run.sh writes; this
+# flag is the belt-and-braces half of it, refusing target=_blank and
+# window.open outright so no unreachable second window can ever be created.
+if [ "$KIOSK_LOCK_NAVIGATION" = "true" ]; then
+    chromium_args+=(--block-new-web-contents)
+fi
+
 # --app (with --kiosk) removes tabs/address bar even if fullscreen is ignored.
 chromium_args+=("--app=${KIOSK_URL}")
 

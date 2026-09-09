@@ -162,3 +162,32 @@ palette (F5F5F5 surfaces, white cards and dialog surface, 212121 text)
 with light-safe minimalist RGB values, so both schemes are readable. The
 kiosk itself should still run dark; the light block exists for desktop
 and phone profiles that follow the system scheme.
+
+## Navigation lockdown via Chromium managed policy, not a runtime URL watcher (2026-09-09)
+
+The kiosk could be browsed away from the dashboard by following links out of
+Home Assistant. Rejected: policing the current URL from `rest_server.py`'s
+DevTools connection and navigating back, as the only mechanism -- it is a
+race by construction (the off-host page is loaded and rendered before
+anything notices) and it depends on the CDP connection being healthy, which
+is precisely what the watchdog exists to doubt. Rejected:
+`--host-resolver-rules` to make every other host fail DNS, which also breaks
+subresources the dashboard legitimately loads from other hosts, the map
+card's tiles being the obvious one. Chosen: a Chromium managed policy
+(`URLBlocklist` `*` plus one `URLAllowlist` origin) written before the
+browser starts, so the browser refuses the navigation itself, plus
+`--block-new-web-contents` so a `target="_blank"` link cannot open a window
+that has no close button. `DeveloperToolsAvailability` was left unset on
+purpose: this app drives Chromium over the DevTools protocol for the
+watchdog, screenshots and refresh, and that policy has been reported to take
+the remote endpoint down with the DevTools window -- the risk of losing the
+watchdog outweighs a DevTools shortcut that `--kiosk` already suppresses and
+that needs a keyboard the panel does not have.
+
+The policy cannot cover in-frontend routing (Settings, Developer tools),
+which never issues a filterable navigation. `return_to_dashboard` polls and
+navigates home for that, and the docs say plainly that it is a tidy-up and
+that a non-admin Home Assistant user is the enforced fix. `KIOSK_URL` and
+the lock flag are exported before `rest_server.py` is forked, not with the
+Chromium exports at the bottom of `run.sh`, because the server inherits the
+environment as it stands when it is started.

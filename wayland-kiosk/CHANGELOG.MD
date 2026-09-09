@@ -3,6 +3,16 @@
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
 
 ## Unreleased
+- Add `lock_navigation`: a Chromium managed policy that blocks every URL
+  except the origin of `ha_url`, plus `--block-new-web-contents` and
+  policy-level blocks on popups, downloads, printing, incognito, sign-in,
+  sync, autofill and the password manager. Off by default. The control
+  API's `launch_url` refuses off-origin URLs while it is on.
+- Add `return_to_dashboard`: seconds between checks that the browser is
+  still on the dashboard path, navigating it home when it is not. Covers
+  in-frontend wandering (Settings, Developer tools), which no browser URL
+  policy can see. `0` (default) disables it. See DOCS.md for why a
+  non-admin Home Assistant user is the real fix.
 - Fix: the dashboard clock could show UTC. The app now applies the time zone
   the Supervisor passes from Home Assistant to /etc/localtime and
   /etc/timezone at startup and logs it; DOCS.md explains the per-user

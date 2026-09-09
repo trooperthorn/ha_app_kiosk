@@ -66,6 +66,8 @@ options:
   ha_url: "http://127.0.0.1:8123"
   ha_dashboard: "lovelace"
   browser_refresh: 12000
+  lock_navigation: false
+  return_to_dashboard: 0
   ha_sidebar: "none"
   ha_theme: ""
   dark_mode: true
@@ -84,6 +86,8 @@ schema:
   ha_url: url
   ha_dashboard: str?
   browser_refresh: int(0,)
+  lock_navigation: bool
+  return_to_dashboard: int(0,)
   ha_sidebar: list(full|narrow|none)
   ha_theme: str?
   dark_mode: bool

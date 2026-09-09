@@ -29,9 +29,64 @@ option works because it appears in the UI.
 | `ignore_certificate_errors` | applied | Passes `--ignore-certificate-errors` to Chromium for self-signed HTTPS. |
 | `api_token` | applied | Optional app-local bearer token for the kiosk control API on `127.0.0.1:8034`. This is **not** a Home Assistant long-lived access token. |
 | `browser_refresh` | applied | Periodic page refresh interval in seconds. `0` disables periodic refresh. |
+| `lock_navigation` | applied | `false` by default. When `true`, a Chromium managed policy blocks every URL except the scheme, host and port of `ha_url`, and new windows are refused outright. See "Locking the kiosk to the dashboard" below. |
+| `return_to_dashboard` | applied | Seconds between checks that the page is still on the dashboard; if it is not, the browser is navigated back to `ha_url` + `ha_dashboard`. `0` (default) disables the check. |
 | `ha_sidebar` | not applied yet | Accepted by the schema, read nowhere. Hiding the sidebar is better done with the kiosk-mode frontend plugin inside Home Assistant. |
 | `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
 | `dark_mode` | not applied yet | Accepted by the schema, read nowhere. Set dark mode per-user in Home Assistant instead. |
+
+## Locking the kiosk to the dashboard
+
+A wall panel that can reach the open Internet is a wall panel someone will
+browse on. Two options close that off, and they cover different halves of the
+problem -- use both.
+
+`lock_navigation: true` keeps the browser on one host. At startup the app
+writes a Chromium managed policy (`URLBlocklist: ["*"]` plus a single
+`URLAllowlist` entry for the scheme, host and port of `ha_url`) into
+`/etc/chromium/policies/managed/kiosk-lockdown.json`. With the default
+`ha_url`, only `http://127.0.0.1:8123` loads; a link to
+`home-assistant.io`, a `file://` URL, or a `chrome://` page is refused by
+Chromium itself with a "Blocked Page" notice, and there is no address bar to
+type into. The same policy turns off popups, downloads, printing, incognito,
+the password manager, autofill, browser sign-in and sync, and Chromium is
+started with `--block-new-web-contents` so a `target="_blank"` link cannot
+open a second, unclosable window. The add-on log line to look for is
+"Navigation lockdown ON". Turning the option back off removes the policy file
+on the next start.
+
+What this does **not** do is keep the user on the dashboard *inside* Home
+Assistant. Home Assistant's frontend is a single-page app: moving from the
+dashboard to Settings or Developer tools never issues a URL request the
+browser can filter, so no browser policy can see it, let alone block it.
+
+Two things cover that half:
+
+1. **Log the kiosk in as a non-admin Home Assistant user.** This is the real
+   fix, and the only one that is actually enforced -- a non-admin user has no
+   Settings or Developer tools to reach. Give that user only the dashboard it
+   should see, and use it for the kiosk's `trusted_users` entry or its
+   `ha_username`.
+2. **`return_to_dashboard: 60`** (any number of seconds) makes the app poll
+   the current page and navigate back to the dashboard when it has wandered
+   off. Sub-views such as `/lovelace/kitchen` count as being on the
+   dashboard, so a panel with several views is not yanked back to the first
+   one; `/config/...` and `/developer-tools/...` are not, so a stray tap
+   unwinds itself within the interval. The login flow (`/auth/...`) is left
+   alone so it cannot be caught in a redirect loop. This is a tidy-up, not a
+   restriction: for the seconds before the next check, the page is wherever
+   the user put it.
+
+Scope, plainly: this is protection against a curious visitor with a
+touchscreen. Someone with a USB keyboard, physical access to the machine, or
+the ability to change add-on options is a different threat model and this
+option does not address it.
+
+Note for the control API: while `lock_navigation` is on, the `launch_url`
+command only accepts URLs on the same origin as `ha_url` and returns an
+error for anything else, rather than letting Chromium silently show a
+blocked page. `/api/health` reports the current state as
+`navigation_locked`.
 
 ## Login: trusted_networks that actually bypasses
 

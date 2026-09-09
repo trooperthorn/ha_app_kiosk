@@ -58,6 +58,44 @@ this route too: it is reachable only from this container and, because
 host. A monitoring tool that only needs to know the kiosk is alive should
 poll this route rather than being handed a copy of `api_token`.
 
+## Navigation lockdown (`lock_navigation`)
+
+Off by default. When on, `run.sh` writes a Chromium managed policy before
+Cage launches the browser: `URLBlocklist: ["*"]` with a single
+`URLAllowlist` entry naming the scheme, host and port of `ha_url`. The
+enforcement point is Chromium itself, not this app -- nothing at runtime has
+to notice a navigation and undo it -- and the policy is read only at browser
+startup, which is why it is written before launch and removed on any start
+where the option is off. It is written to all three managed-policy
+directories a Chromium package may use.
+
+The same file disables popups, downloads, printing, incognito, browser
+sign-in, sync, autofill, the password manager and bookmark editing, and
+`launch-browser.sh` adds `--block-new-web-contents` so no second window can
+be created at all. `DeveloperToolsAvailability` is deliberately not set; see
+docs/decisions.md.
+
+Two limits are worth stating rather than implying:
+
+- The policy filters navigations, not subresources. The dashboard's own
+  requests for images, tiles and fonts from other hosts are unaffected --
+  which is why a map card still works, and also why "cannot reach another
+  host at all" is not what this option provides.
+- Home Assistant's frontend routes client-side, so moving from the dashboard
+  to Settings or Developer tools is invisible to any URL policy. The
+  supported answer is a non-admin Home Assistant user for the kiosk;
+  `return_to_dashboard` polls and navigates home as a tidy-up on top of
+  that, not as an access control.
+
+The threat model is a visitor with a touchscreen. It is not a defense
+against anyone with a keyboard, physical access, or the ability to edit
+add-on options.
+
+While the lock is on, `launch_url` on the control API rejects any URL that
+is not on the same origin, so an automation gets an error instead of a
+blocked page on the wall. `/api/health` exposes the state as
+`navigation_locked`.
+
 ## Screenshot command returns dashboard content
 
 The `screenshot` command captures whatever is currently rendered --
