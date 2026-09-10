@@ -215,17 +215,22 @@ browser's time zone" (the default for a new user) and "Use server time zone".
 With the default, the clock shows whatever the kiosk's own browser believes,
 which is the container's time zone.
 
-The app inherits Home Assistant's configured time zone automatically: the
-Supervisor passes it to the container, and on startup the app applies it to
-every place Chromium looks (the `TZ` variable, `/etc/localtime`, and
-`/etc/timezone`), then logs the zone it applied. So with either profile
-setting the clock should match Settings, System, General, Time zone.
+The app resolves Home Assistant's configured time zone automatically on
+startup, whether Supervisor provides it as a `TZ` environment variable or
+only as a bind-mounted `/etc/localtime` (the more common case — this is why
+`date` inside the container is already correct even when the browser isn't).
+The app then exports `TZ` itself, because that is the one signal Chromium's
+bundled ICU reliably honors; `/etc/localtime` alone is not enough for it, even
+though it's enough for every other program in the container. With either
+kiosk-user profile setting the clock should now match Settings, System,
+General, Time zone.
 
 If the clock still shows UTC, set the kiosk user's profile to "Use server
 time zone": it makes the browser irrelevant and is the right choice for a
 display that sits in the same house the server is configured for. Then check
-the app log for the "Time zone from Home Assistant" line; a warning there
-means the zone name had no matching zoneinfo file, which is worth reporting.
+the app log for the "Time zone resolved as ..." line; a warning there means
+no usable zone could be found (no `TZ`, no `/etc/timezone`, and no valid
+`/etc/localtime` symlink), which is worth reporting.
 
 ## Boot and reboot behavior
 

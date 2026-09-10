@@ -58,18 +58,33 @@ chmod 0700 "$XDG_RUNTIME_DIR"
 # docs/operations.md.
 export HOME=/root
 
-# The Supervisor injects Home Assistant's time zone as TZ; make every lookup
-# path Chromium uses agree with it. See docs/operations.md.
-if [ -n "${TZ:-}" ]; then
-    if [ -f "/usr/share/zoneinfo/${TZ}" ]; then
-        ln -sf "/usr/share/zoneinfo/${TZ}" /etc/localtime
-        echo "$TZ" > /etc/timezone
-        bashio::log.info "Time zone from Home Assistant: ${TZ} (applied to /etc/localtime)."
-    else
-        bashio::log.warning "Time zone '${TZ}' from Home Assistant has no zoneinfo file; the browser may fall back to UTC."
-    fi
+# The Supervisor injects Home Assistant's time zone as TZ. Previously this
+# block only wrote it to /etc/localtime and /etc/timezone, assuming
+# Chromium's ICU would pick one of those up; a field report showed the
+# browser still reporting UTC while `date` (which does follow
+# /etc/localtime) was already correct. Testing the bundled Chromium showed
+# what actually works reliably is the TZ environment variable of its own
+# process, which this block never exported. It now does, with a fallback to
+# /etc/timezone or the /etc/localtime symlink target in case TZ is ever
+# missing (e.g. a bind-mounted /etc/localtime with no TZ set). See
+# docs/operations.md.
+KIOSK_TZ="${TZ:-}"
+if [ -z "$KIOSK_TZ" ] && [ -s /etc/timezone ]; then
+    KIOSK_TZ=$(head -n 1 /etc/timezone)
+fi
+if [ -z "$KIOSK_TZ" ] && [ -L /etc/localtime ]; then
+    localtime_target=$(readlink -f /etc/localtime)
+    KIOSK_TZ="${localtime_target#*/zoneinfo/}"
+fi
+
+if [ -n "$KIOSK_TZ" ] && [ -f "/usr/share/zoneinfo/${KIOSK_TZ}" ]; then
+    ln -sf "/usr/share/zoneinfo/${KIOSK_TZ}" /etc/localtime
+    echo "$KIOSK_TZ" > /etc/timezone
+    export TZ="$KIOSK_TZ"
+    bashio::log.info "Time zone resolved as ${KIOSK_TZ} (applied to /etc/localtime and exported as TZ for Chromium)."
 else
-    bashio::log.warning "No TZ in the environment; the browser will use UTC unless the kiosk user's profile selects the server time zone."
+    KIOSK_TZ=""
+    bashio::log.warning "Could not resolve a valid time zone; the browser may report UTC unless the kiosk user's profile selects the server time zone."
 fi
 
 # Seat management (seatd)

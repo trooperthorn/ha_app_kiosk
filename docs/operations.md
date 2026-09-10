@@ -139,21 +139,26 @@ The Supervisor injects Home Assistant's configured time zone into every
 add-on container as `TZ` (`supervisor/docker/app.py` builds the environment
 with `ENV_TIME: self.sys_timezone`), and Core pushes changes to the
 Supervisor on `EVENT_CORE_CONFIG_UPDATE`. The base image ships `tzdata`;
-the Dockerfile also lists it explicitly so the dependency is visible.
-`run.sh` applies `TZ` to `/etc/localtime` and `/etc/timezone` before anything
-else starts, because Chromium's ICU host-zone detection consults `TZ`, then
-`/etc/localtime`, then `/etc/timezone`, and making all three agree removes
-the container as a variable. The dashboard clock is still decided by the
-Home Assistant frontend: a user's profile Time zone setting defaults to
-`local` (the browser's `Intl` zone, see the frontend's
-`resolve-time-zone.ts`), and only `server` uses Home Assistant's zone
-directly. The user-facing guidance is in `wayland-kiosk/DOCS.md`.
+the Dockerfile also lists it explicitly so the dependency is visible. The
+dashboard clock is still decided by the Home Assistant frontend: a user's
+profile Time zone setting defaults to `local` (the browser's `Intl` zone,
+see the frontend's `resolve-time-zone.ts`), and only `server` uses Home
+Assistant's zone directly. The user-facing guidance is in
+`wayland-kiosk/DOCS.md`.
 
-Unverified: whether the Alpine Chromium build resolved UTC on the physical
-kiosk before this change because of a missing `/etc/localtime`, because
-`TZ` was not reaching it, or because the profile was on `local`. The
-startup log line now records the zone the app applied, which narrows this
-on the next report.
+Resolved (was "Unverified" above): a field report confirmed the browser
+reporting UTC while the container's own clock (`date`) was already correct.
+Root cause was PR #29's original implementation: it wrote `TZ` to
+`/etc/localtime` and `/etc/timezone` but never exported `TZ` itself into the
+environment, on the assumption that Chromium's ICU would pick up one of the
+files. Testing the actual bundled Chromium confirmed the fix needed is
+simpler and more direct than that assumption: Chromium reliably follows the
+`TZ` environment variable of its own process, so `run.sh` now resolves a
+zone from `TZ` if present, else `/etc/timezone`, else the `/etc/localtime`
+symlink target — covering the common case where Supervisor (or a bind
+mount) only provides `/etc/localtime` and never sets `TZ` at all — and
+`export`s it, so every child process including Chromium inherits it
+directly.
 
 ## `login_delay` truncation
 

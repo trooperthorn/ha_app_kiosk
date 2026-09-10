@@ -3,6 +3,12 @@
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
 
 ## Unreleased
+- Fix: the browser could show UTC even when the container's own clock was
+  correct. `/etc/localtime` (which Supervisor typically bind-mounts,
+  independent of any `TZ` variable) is enough for `date` but not reliably
+  for Chromium's bundled ICU. The app now resolves a zone name from `TZ`,
+  `/etc/timezone`, or the `/etc/localtime` symlink target, and exports it as
+  `TZ` — the one signal Chromium does honor — for every child process.
 - Fix: the kiosk could sit on a Chromium error page indefinitely after Home
   Assistant restarted. The watchdog only tested whether the renderer was
   responsive, and an error page is a healthy renderer, so nothing recovered

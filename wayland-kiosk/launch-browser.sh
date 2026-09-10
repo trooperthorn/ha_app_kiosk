@@ -34,6 +34,12 @@ if [ "$KIOSK_IGNORE_CERTIFICATE_ERRORS" = "true" ]; then
     chromium_args+=(--ignore-certificate-errors)
 fi
 
+# Chromium's time zone comes from the TZ environment variable, which run.sh
+# resolves and exports before this script runs (see run.sh); Chromium
+# inherits it like any other child process. No extra flag is needed here,
+# and none exists: Chromium has no supported --timezone switch outside its
+# own test harnesses.
+
 # Dark mode. --force-dark-mode makes the browser report
 # `prefers-color-scheme: dark`, which is the signal Home Assistant's own
 # theme handling follows. Blink's auto-darkening filter
