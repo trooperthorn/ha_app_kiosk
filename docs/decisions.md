@@ -191,3 +191,42 @@ that a non-admin Home Assistant user is the enforced fix. `KIOSK_URL` and
 the lock flag are exported before `rest_server.py` is forked, not with the
 Chromium exports at the bottom of `run.sh`, because the server inherits the
 environment as it stands when it is started.
+
+## Error-page recovery keyed on `document.documentURI`, not on liveness (2026-09-09)
+
+The kiosk could sit on "This site can't be reached" until a human reloaded
+it. The existing watchdog could not see it: it probed whether the renderer
+answered, and an error page answers immediately. Rejected: polling the
+target list from `/json` and comparing URLs -- verified against Chromium 141
+that a browser error page keeps advertising the *original* URL there, so the
+target list cannot distinguish it from a healthy dashboard. Rejected:
+checking for a Home Assistant DOM root such as `home-assistant`, which would
+false-positive on the login page (`ha-authorize`) and reload it in a loop.
+Rejected: subscribing to CDP events over a persistent websocket, which would
+fight the serialized one-shot `CDP_LOCK` design the rest of the server is
+built on. Chosen: evaluate `document.documentURI` as the watchdog's existing
+liveness probe -- same cost as evaluating `1` -- and treat a
+`chrome-error://` prefix as a reload trigger. It reuses one CDP round trip
+for both questions and needs no new connection style.
+
+Reloading a crashed renderer moved from the second failed probe to the
+first, bounded to once per episode. The original delay existed to avoid
+restarting a busy renderer, but the cost it was avoiding is a page reload,
+while the cost it was imposing is a minute or more of dead panel. The
+once-per-episode bound keeps the original protection where it mattered: a
+slow dashboard is not reloaded on every cycle.
+
+## `dark_mode` implemented as `--force-dark-mode`, without Blink auto-darkening (2026-09-09)
+
+The option had been accepted by the schema and read nowhere. Rejected:
+`--enable-features=WebContentsForceDark` (Blink's auto-dark filter), which
+inverts the page's own colors -- on a frontend that already ships a dark
+theme that means inverted images and a second darkening pass over dark
+surfaces. Rejected: forcing a theme on the Home Assistant side from the app,
+for the same reason the time-zone decision rejects it -- the app has no
+supported way to write another user's frontend settings. Chosen:
+`--force-dark-mode`, which was verified against Chromium 141 to flip
+`prefers-color-scheme` to dark for the page while leaving the page's own
+colors alone. The limit is documented rather than worked around: a Home
+Assistant user whose profile pins a light theme stays light, because that is
+an explicit choice the frontend honors over the browser's preference.

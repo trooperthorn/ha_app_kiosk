@@ -213,6 +213,49 @@ watchdog checks `RUNTIME_STATE["display_frozen"]` first and skips its
 check entirely while frozen, rather than treating an intentionally paused
 page as a hang and restarting the container.
 
+## Watchdog: two failure modes that look nothing alike
+
+`chromium_watchdog` recovers two states, and only one of them is a liveness
+problem.
+
+An **unresponsive renderer** (a freeze, or the sad-tab left by a renderer
+crash) fails the CDP probe. Verified against Chromium 141: after
+`Page.crash`, `Runtime.evaluate` times out while the target stays listed in
+`/json` with its original URL, and `Page.reload` recovers it. The reload is
+issued on the first failed probe -- a dead wall panel is the symptom users
+report, and a minute of it is a long time -- but only once per episode, so a
+dashboard that is merely slow to load is not restarted every cycle. The
+three-failure escalation to `killall cage` is unchanged behind that.
+
+A **Chromium error page** is the opposite: the renderer is perfectly healthy
+and answers the probe instantly, so no liveness check will ever see it. This
+is what the kiosk shows when Core was restarting as the page loaded. It is
+detected by what the probe returns rather than whether it returns: the
+watchdog evaluates `document.documentURI`, which costs exactly what
+evaluating `1` cost, and treats a `chrome-error://` prefix as a reload
+trigger. Verified the same way: a navigation to a dead port leaves
+`documentURI` at `chrome-error://chromewebdata/` while `/json` still
+advertises the original URL, which is why the target list cannot be used for
+this and the in-page URI can.
+
+Reloads while the error page persists happen every cycle (Core is usually
+just coming back), and the log line is emitted once per ten cycles so a long
+Core restart does not fill it.
+
+## Memory reporting
+
+`memory_reporter` logs one line every 30 minutes: container usage against
+the cgroup limit (v2 `memory.current`/`memory.max`, falling back to v1), and
+Chromium's summed RSS with a process count and a running peak. The same
+values are on `/api/health`.
+
+The Chromium figure over-reports: the browser is multi-process and RSS
+counts shared pages once per process. It is deliberately a trend line -- the
+question it exists to answer is "does this climb between restarts", which a
+snapshot taken after a crash cannot answer. A cgroup limit reported as
+"unlimited" by v1 is a sentinel near the word size, not a real number, and
+is reported as no limit rather than as an absurd one.
+
 ## CI gate thresholds
 
 ShellCheck in `security.yml` runs with `--severity=error`. The warning and

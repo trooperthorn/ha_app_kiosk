@@ -3,6 +3,22 @@
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
 
 ## Unreleased
+- Fix: the kiosk could sit on a Chromium error page indefinitely after Home
+  Assistant restarted. The watchdog only tested whether the renderer was
+  responsive, and an error page is a healthy renderer, so nothing recovered
+  it until a manual reload or the next `browser_refresh` (default: over
+  three hours). It now reads the document URI each cycle and reloads a
+  `chrome-error://` page within ~30s, retrying while Core is still down.
+- Fix: a crashed renderer waited for the second failed probe before being
+  reloaded, leaving a dead screen for a minute or more. The reload now
+  happens on the first failed probe, once per episode so a slow dashboard is
+  not put into a reload loop. Escalation to a container restart is unchanged.
+- Add a memory line to the log every 30 minutes (container usage against the
+  limit, Chromium RSS, peak) and the same counters to `/api/health`, so
+  "is this a resource problem" is answerable from the add-on log.
+- `dark_mode` is now applied: it starts Chromium with `--force-dark-mode` so
+  the browser reports `prefers-color-scheme: dark`. Home Assistant follows
+  that only when the kiosk user's theme mode is Auto; see DOCS.md.
 - Add `lock_navigation`: a Chromium managed policy that blocks every URL
   except the origin of `ha_url`, plus `--block-new-web-contents` and
   policy-level blocks on popups, downloads, printing, incognito, sign-in,

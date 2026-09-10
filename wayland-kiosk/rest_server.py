@@ -17,6 +17,14 @@ WATCHDOG_FINAL_TIMEOUT = 30
 WATCHDOG_FAILURE_LIMIT = 3
 WATCHDOG_INTERVAL = 30
 DISPLAY_POLL_INTERVAL = 2
+MEMORY_LOG_INTERVAL = 1800
+# Chromium's own error pages (unreachable host, DNS failure, renderer crash
+# recovery) all report this document URI while the renderer itself stays
+# perfectly responsive; see docs/operations.md.
+ERROR_PAGE_PREFIX = "chrome-error://"
+# One line per this many watchdog cycles while an error page persists, so a
+# Core restart does not fill the log.
+ERROR_PAGE_LOG_EVERY = 10
 
 START_TIME = time.monotonic()
 
@@ -26,6 +34,13 @@ RUNTIME_STATE: Dict[str, Any] = {
     "display_on": None,
     "display_frozen": False,
     "chromium_responsive": True,
+    "on_error_page": False,
+    "error_page_reloads": 0,
+    "unresponsive_reloads": 0,
+    "container_memory_bytes": None,
+    "container_memory_limit_bytes": None,
+    "chromium_rss_bytes": None,
+    "chromium_rss_peak_bytes": None,
 }
 
 # CDP calls are serialized; see docs/design.md.
@@ -140,6 +155,96 @@ async def start_background_command(cmd_list, log_prefix=""):
         return {"success": False, "error": str(exc)}
 
 
+def _read_int(path: str) -> Optional[int]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return int(handle.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def container_memory() -> tuple:
+    """(used, limit) bytes for this container, or (None, None).
+
+    cgroup v2 first, then v1. An "unlimited" v1 limit is a sentinel near the
+    word size rather than a real number, so it is reported as no limit.
+    """
+    used = _read_int("/sys/fs/cgroup/memory.current")
+    if used is not None:
+        limit = _read_int("/sys/fs/cgroup/memory.max")  # "max" -> None
+        return used, limit
+    used = _read_int("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+    limit = _read_int("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+    if limit is not None and limit > (1 << 60):
+        limit = None
+    return used, limit
+
+
+def chromium_rss() -> tuple:
+    """(summed RSS bytes, process count) for Chromium's process tree.
+
+    Chromium is multi-process and RSS counts shared pages once per process,
+    so this over-reports somewhat. It is a trend line for "is memory
+    climbing between restarts", not an accounting figure.
+    """
+    total = 0
+    count = 0
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/status", encoding="utf-8") as handle:
+                name = ""
+                for line in handle:
+                    if line.startswith("Name:"):
+                        name = line.split(":", 1)[1].strip()
+                        if not name.startswith("chrom"):
+                            break
+                    elif line.startswith("VmRSS:") and name.startswith("chrom"):
+                        total += int(line.split()[1]) * 1024
+                        count += 1
+                        break
+        except (OSError, ValueError):
+            continue
+    return (total, count) if count else (None, 0)
+
+
+def _mib(value: Optional[int]) -> str:
+    return "unknown" if value is None else f"{value / (1024 * 1024):.0f} MiB"
+
+
+async def memory_reporter():
+    """Log a periodic memory line so resource questions have evidence.
+
+    Answering "is the kiosk crashing because it is out of memory" from a
+    support log needs a trend, not a snapshot taken after the fact; see
+    docs/operations.md.
+    """
+    while True:
+        used, limit = container_memory()
+        rss, procs = chromium_rss()
+        RUNTIME_STATE["container_memory_bytes"] = used
+        RUNTIME_STATE["container_memory_limit_bytes"] = limit
+        RUNTIME_STATE["chromium_rss_bytes"] = rss
+        if rss is not None:
+            peak = RUNTIME_STATE["chromium_rss_peak_bytes"]
+            if peak is None or rss > peak:
+                RUNTIME_STATE["chromium_rss_peak_bytes"] = rss
+
+        share = ""
+        if used is not None and limit:
+            share = f" ({used / limit:.0%} of {_mib(limit)})"
+        logging.info(
+            "Memory: container %s%s, Chromium %s across %d process(es), peak %s.",
+            _mib(used),
+            share,
+            _mib(rss),
+            procs,
+            _mib(RUNTIME_STATE["chromium_rss_peak_bytes"]),
+        )
+        await asyncio.sleep(MEMORY_LOG_INTERVAL)
+
+
 def read_cdp_targets(timeout: float = SHORT_TIMEOUT):
     """Read Chromium's DevTools target list. Blocking; call in a thread."""
     with urllib.request.urlopen(
@@ -231,8 +336,18 @@ async def current_page_url() -> Optional[str]:
 
 # CHROME WATCHDOG
 async def chromium_watchdog():
-    """Recover a persistently frozen page without killing a busy renderer."""
+    """Recover a persistently frozen page without killing a busy renderer.
+
+    Two different failures land here and they look nothing alike. An
+    unresponsive renderer fails the probe outright. A Chromium error page --
+    what the kiosk shows when Core was restarting at load time -- has a
+    perfectly healthy renderer that answers the probe immediately, so it is
+    caught by reading the document URI the probe returns rather than by any
+    liveness signal. See docs/operations.md.
+    """
     failures = 0
+    reloaded_this_episode = False
+    error_page_cycles = 0
     await asyncio.sleep(20)  # give Chromium time to finish its initial boot
 
     while True:
@@ -243,9 +358,11 @@ async def chromium_watchdog():
             await asyncio.sleep(WATCHDOG_INTERVAL)
             continue
 
+        # document.documentURI costs exactly what evaluating "1" costs and
+        # additionally reveals an error page.
         result = await cdp_page_command(
             "Runtime.evaluate",
-            {"expression": "1", "returnByValue": True},
+            {"expression": "document.documentURI", "returnByValue": True},
             timeout=WATCHDOG_RENDERER_TIMEOUT,
             log_failure=False,
         )
@@ -254,7 +371,35 @@ async def chromium_watchdog():
             if failures:
                 logging.info("Watchdog: Chromium renderer recovered.")
             failures = 0
+            reloaded_this_episode = False
             RUNTIME_STATE["chromium_responsive"] = True
+
+            document_uri = result["result"].get("result", {}).get("value")
+            on_error_page = isinstance(document_uri, str) and document_uri.startswith(
+                ERROR_PAGE_PREFIX
+            )
+            RUNTIME_STATE["on_error_page"] = on_error_page
+            if on_error_page:
+                # Home Assistant is usually just restarting, so retry every
+                # cycle and keep the log to one line per ERROR_PAGE_LOG_EVERY.
+                if error_page_cycles % ERROR_PAGE_LOG_EVERY == 0:
+                    logging.warning(
+                        "Watchdog: the kiosk is showing a browser error page "
+                        "(Home Assistant unreachable when the page loaded); "
+                        "reloading. Retrying every %ds until it comes back.",
+                        WATCHDOG_INTERVAL,
+                    )
+                error_page_cycles += 1
+                RUNTIME_STATE["error_page_reloads"] += 1
+                await cdp_page_command(
+                    "Page.reload", {"ignoreCache": True}, log_failure=False
+                )
+            elif error_page_cycles:
+                logging.info(
+                    "Watchdog: the kiosk is back on a real page after %d reload(s).",
+                    error_page_cycles,
+                )
+                error_page_cycles = 0
         else:
             failures += 1
             RUNTIME_STATE["chromium_responsive"] = False
@@ -265,8 +410,13 @@ async def chromium_watchdog():
                 result.get("error", "unknown CDP failure"),
             )
 
-            # A reload is less disruptive than a full container restart.
-            if failures == WATCHDOG_FAILURE_LIMIT - 1:
+            # A reload is less disruptive than a full container restart, and
+            # it is what actually recovers a crashed renderer -- so try it on
+            # the first failed probe rather than a minute into the episode.
+            # Once per episode: repeating it every cycle would keep
+            # restarting the load of a merely slow dashboard.
+            if not reloaded_this_episode:
+                reloaded_this_episode = True
                 reload_result = await cdp_page_command(
                     "Page.reload",
                     {"ignoreCache": False},
@@ -274,6 +424,7 @@ async def chromium_watchdog():
                     log_failure=False,
                 )
                 if reload_result["success"]:
+                    RUNTIME_STATE["unresponsive_reloads"] += 1
                     logging.warning(
                         "Watchdog: requested a page reload before considering restart."
                     )
@@ -539,6 +690,13 @@ async def health_handler(request):
         "display_frozen": RUNTIME_STATE["display_frozen"],
         "chromium_responsive": RUNTIME_STATE["chromium_responsive"],
         "navigation_locked": NAVIGATION_LOCKED,
+        "on_error_page": RUNTIME_STATE["on_error_page"],
+        "error_page_reloads": RUNTIME_STATE["error_page_reloads"],
+        "unresponsive_reloads": RUNTIME_STATE["unresponsive_reloads"],
+        "container_memory_bytes": RUNTIME_STATE["container_memory_bytes"],
+        "container_memory_limit_bytes": RUNTIME_STATE["container_memory_limit_bytes"],
+        "chromium_rss_bytes": RUNTIME_STATE["chromium_rss_bytes"],
+        "chromium_rss_peak_bytes": RUNTIME_STATE["chromium_rss_peak_bytes"],
     })
 
 
@@ -557,6 +715,8 @@ async def main():
     asyncio.create_task(display_freeze_watcher())
     logging.info("Display freeze watcher initialized.")
     asyncio.create_task(dashboard_return_watcher())
+    asyncio.create_task(memory_reporter())
+    logging.info("Memory reporter initialized (one line every %ds).", MEMORY_LOG_INTERVAL)
 
     app = web.Application()
     app.router.add_post('/api', api_handler)

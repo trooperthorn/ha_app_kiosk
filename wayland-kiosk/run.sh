@@ -141,6 +141,7 @@ HA_PASSWORD=$(read_option 'ha_password' '')
 LOGIN_DELAY=$(read_option 'login_delay' '10')
 IGNORE_CERTIFICATE_ERRORS=$(read_option 'ignore_certificate_errors' 'true')
 LOCK_NAVIGATION=$(read_option 'lock_navigation' 'false')
+DARK_MODE=$(read_option 'dark_mode' 'true')
 
 # Append the dashboard path (default "lovelace", HA's Overview page).
 if [ -n "$HA_DASHBOARD" ]; then
@@ -492,6 +493,7 @@ export KIOSK_ROTATION="$ROTATION_CONFIG"
 export KIOSK_ROTATION_TRANSFORM="$ROTATION_DEGREES"
 export KIOSK_CHROMIUM_BIN="$CHROMIUM_BIN"
 export KIOSK_IGNORE_CERTIFICATE_ERRORS="$IGNORE_CERTIFICATE_ERRORS"
+export KIOSK_DARK_MODE="$DARK_MODE"
 
 bashio::log.info "Starting Cage with Chromium pointing to: ${URL}"
 
