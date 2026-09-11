@@ -11,6 +11,7 @@ import tempfile
 # with the same inherited UTC that an explicit setting must override.
 Path('/data').mkdir(exist_ok=True)
 Path('/data/options.json').write_text(json.dumps({'time_zone': 'America/Chicago'}))
+subprocess.run(['python3', '/app/prepare_runtime.py'], check=True)
 startup = Path('/run.sh').read_text()
 block = startup[startup.index('KIOSK_TZ='):startup.index('# Seat management')]
 with tempfile.TemporaryDirectory() as temp:
@@ -20,6 +21,7 @@ with tempfile.TemporaryDirectory() as temp:
                             check=True, capture_output=True, text=True)
     assert 'RESOLVED=America/Chicago' in result.stdout, result.stdout
     print(result.stdout.strip())
+    os.chmod(temp, 0o755)
     page = Path(temp) / 'timezone.html'
     page.write_text('''<body><script>
 document.body.textContent = JSON.stringify({
@@ -30,9 +32,9 @@ document.body.textContent = JSON.stringify({
  winterOffset: new Date('2026-01-11T15:12:00Z').getTimezoneOffset()
 });</script></body>''')
     result = subprocess.run([
-        '/usr/lib/chromium/chromium', '--headless', '--no-sandbox',
-        '--disable-dev-shm-usage', '--no-first-run', '--disable-gpu',
-        f'--user-data-dir={temp}/profile', '--dump-dom', page.as_uri(),
+        'python3', '/app/prepare_runtime.py', 'launch', '/usr/lib/chromium/chromium', '--headless',
+        '--disable-dev-shm-usage', '--no-first-run', '--disable-gpu', '--disable-gpu-shader-disk-cache', '--disable-software-rasterizer', '--use-gl=disabled',
+        '--user-data-dir=/data/chromium-profile', '--dump-dom', page.as_uri(),
     ], env={**os.environ, 'TZ': 'America/Chicago'},
         check=True, capture_output=True, text=True, timeout=60)
     match = re.search(r'<body>(\{.*?\})</body>', result.stdout)

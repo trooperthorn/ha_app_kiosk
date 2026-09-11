@@ -37,8 +37,8 @@
       "description": "Delay in seconds before attempting automated interactions."
     },
     "ignore_certificate_errors": {
-      "name": "Ignore Certificate Errors",
-      "description": "Bypass SSL/TLS certificate warnings for self-hosted instances."
+      "name": "Legacy certificate bypass (ignored)",
+      "description": "Deprecated. Use Trust a self-signed certificate and supply its public certificate instead."
     },
     "auth_method": {
       "name": "Authentication Method",
@@ -54,11 +54,39 @@
     },
     "api_token": {
       "name": "Kiosk Control API Token",
-      "description": "Optional app-local bearer token protecting the control API on 127.0.0.1:8034. This is not a Home Assistant long-lived access token."
+      "description": "At least 32 non-whitespace characters when the control API is enabled. Use this app-local secret in automation Bearer headers; it is not a Home Assistant access token."
     },
     "time_zone": {
       "name": "Time zone",
       "description": "IANA time zone for the kiosk browser. Defaults to America/Chicago (US Central with automatic daylight saving time). Leave empty to inherit the system time zone. Restart the app after changing."
+    },
+    "allow_http": {
+      "name": "Allow HTTP",
+      "description": "Allow local Home Assistant URLs without HTTPS. Enabled by default. Disable to require HTTPS."
+    },
+    "allow_self_signed": {
+      "name": "Trust a self-signed certificate",
+      "description": "Trust the public PEM certificate below. Hostname and expiry checks remain enabled. Restart after changing."
+    },
+    "self_signed_certificate": {
+      "name": "Trusted certificate (PEM)",
+      "description": "Paste one public certificate or local CA certificate, including BEGIN/END CERTIFICATE lines. Never paste a private key."
+    },
+    "audio_enabled": {
+      "name": "Enable audio",
+      "description": "Enable dashboard playback. Disable to mute the browser and disconnect it from PulseAudio. Restart after changing."
+    },
+    "control_api_enabled": {
+      "name": "Enable control API",
+      "description": "Allow authenticated Home Assistant automations over the internal app network. Requires an API token of at least 32 characters."
+    },
+    "gpu_devices": {
+      "name": "GPU devices",
+      "description": "Select the DRM card and render node for this display. Usually card0 and renderD128."
+    },
+    "input_devices": {
+      "name": "Touchscreen and input devices",
+      "description": "Select the touchscreen and pointer event devices from Settings > System > Hardware. Other input devices are not granted access."
     }
   }
 }

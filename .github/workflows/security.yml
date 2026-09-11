@@ -5,6 +5,7 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
   schedule:
     - cron: "23 7 * * 1"
 
@@ -41,7 +42,7 @@ jobs:
       - name: Install pinned scanner
         run: pip install "bandit==1.8.6"
       - name: Bandit medium/high findings
-        run: bandit -q -r wayland-kiosk/rest_server.py -ll
+        run: bandit -q -r wayland-kiosk -ll
 
   shell-security:
     name: ShellCheck app scripts
@@ -59,7 +60,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build the app image
         run: docker build --tag local/app-kiosk:${{ github.sha }} wayland-kiosk
-      # only-fixed narrows the gate to fixable findings; see docs/security.md.
+      - name: Install Grype and retain all findings (including unfixed)
+        id: inventory
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: local/app-kiosk:${{ github.sha }}
+          fail-build: false
+          only-fixed: false
+          output-format: json
+          grype-version: v0.110.0
+      - name: Attach full vulnerability inventory
+        if: always() && steps.inventory.outputs.json != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vulnerabilities-${{ github.sha }}
+          path: ${{ steps.inventory.outputs.json }}
+      # Block every fixable High/Critical finding, without ID-only exceptions.
       - name: Scan installed OS packages
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
@@ -67,5 +83,5 @@ jobs:
           fail-build: true
           severity-cutoff: high
           only-fixed: true
-          output-format: table
+          output-format: json
           grype-version: v0.110.0

@@ -1,5 +1,10 @@
 # Decisions
 
+Historical entries below describe earlier releases. The security isolation
+release supersedes the broad static device list, host loopback authentication,
+root browser, inherited-only timezone, and unpinned base decisions. See
+[security.md](security.md) for the current architecture and validation limits.
+
 Dated entries for fixes that were tried, rejected, or reverted, and why.
 See `wayland-kiosk/CHANGELOG.MD` for the complete dated release history;
 this file covers only the decisions that still shape how the current code

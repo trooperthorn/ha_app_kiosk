@@ -12,10 +12,10 @@ fi
 chromium_args=(
     --kiosk
     --start-fullscreen
-    --no-sandbox
     --enable-features=UseOzonePlatform
     --ozone-platform=wayland
     --disable-infobars
+    --remote-debugging-address=127.0.0.1
     --remote-debugging-port=9222
     --no-first-run
     --no-default-browser-check
@@ -23,6 +23,7 @@ chromium_args=(
     --disable-background-networking
     --disable-component-update
     --disable-features=GCM
+    --disable-gpu-shader-disk-cache
     --disable-dev-shm-usage
     --disable-session-crashed-bubble
     --disable-pinch
@@ -30,8 +31,8 @@ chromium_args=(
     --user-data-dir=/data/chromium-profile
 )
 
-if [ "$KIOSK_IGNORE_CERTIFICATE_ERRORS" = "true" ]; then
-    chromium_args+=(--ignore-certificate-errors)
+if [ "${KIOSK_AUDIO_ENABLED:-true}" != "true" ]; then
+    chromium_args+=(--mute-audio)
 fi
 
 # Chromium's time zone comes from the TZ environment variable, which run.sh

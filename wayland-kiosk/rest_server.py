@@ -5,6 +5,9 @@ import asyncio
 import time
 import urllib.request
 import json
+import hmac
+from security_config import load_options, validate_options, validate_url, origin
+from credential_login import credential_login
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
@@ -60,15 +63,7 @@ RETURN_EXEMPT_PREFIXES = ("/auth/",)
 # see docs/security.md.
 ALLOWED_COMMANDS = {"wlr-randr", "wtype", "killall", "swayidle"}
 
-def load_options() -> Dict[str, Any]:
-    try:
-        with open("/data/options.json") as f:
-            return json.load(f)
-    except Exception:
-        logging.exception("Failed to read /data/options.json")
-        return {}
-
-OPTIONS = load_options()
+OPTIONS = validate_options(load_options())
 API_TOKEN: Optional[str] = OPTIONS.get("api_token") or None
 
 try:
@@ -110,7 +105,12 @@ async def execute_command(cmd_list, timeout=SHORT_TIMEOUT, log_prefix="", allow_
         proc = await asyncio.create_subprocess_exec(
             *cmd_list, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except (TimeoutError, asyncio.CancelledError):
+            proc.kill()
+            await proc.communicate()
+            raise
         if print_stdout and stdout:
             logging.info("[%s] stdout: %s", log_prefix, stdout.decode().strip())
         if stderr:
@@ -300,11 +300,10 @@ async def cdp_page_command(
 
 def same_origin(url: str, reference: str) -> bool:
     """True when both URLs share a scheme, host and port."""
-    left, right = urlsplit(url), urlsplit(reference)
-    return (left.scheme, left.netloc.rsplit("@", 1)[-1]) == (
-        right.scheme,
-        right.netloc.rsplit("@", 1)[-1],
-    )
+    try:
+        return origin(url) == origin(reference)
+    except ValueError:
+        return False
 
 
 def on_dashboard(url: str) -> bool:
@@ -646,8 +645,11 @@ async def handle_wlr_randr(data: Payload) -> Dict[str, Any]:
 async def handle_launch_url(data: Payload) -> Dict[str, Any]:
     """Redirect browser to given URL via Chrome DevTools Protocol."""
     url = str(data["url"]) if data.get("url") else str(OPTIONS.get("ha_url") or "http://127.0.0.1:8123")
-    if url != "about:blank" and not url.startswith(("http://", "https://")):
-        url = "http://" + url
+    if url != "about:blank":
+        try:
+            validate_url(url, OPTIONS.get('allow_http', True))
+        except ValueError as error:
+            return {"success": False, "error": str(error)}
     # Chromium would refuse this anyway once lock_navigation is on; refusing
     # it here turns a silently blocked page into an answer the caller can act
     # on. See docs/security.md.
@@ -675,16 +677,23 @@ async def handle_launch_url(data: Payload) -> Dict[str, Any]:
 
 async def api_handler(request):
     """Handles incoming POST requests and routes them to the correct function."""
-    if API_TOKEN:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header != f"Bearer {API_TOKEN}":
-            return web.json_response({"success": False, "error": "Unauthorized"}, status=401)
+    if not OPTIONS.get('control_api_enabled', False) or not API_TOKEN:
+        return web.json_response({"success": False, "error": "Control API disabled"}, status=503)
+    if request.headers.get('Origin') is not None:
+        return web.json_response({"success": False, "error": "Browser-origin requests are not accepted"}, status=403)
+    auth_header = request.headers.get('Authorization', '')
+    if not hmac.compare_digest(auth_header.encode(), f'Bearer {API_TOKEN}'.encode()):
+        return web.json_response({"success": False, "error": "Unauthorized"}, status=401)
+    if request.content_type != 'application/json':
+        return web.json_response({"success": False, "error": "Use application/json"}, status=415)
 
     try:
         data = await request.json()
     except Exception:
         return web.json_response({"success": False, "error": "Invalid JSON body"}, status=400)
 
+    if not isinstance(data, dict) or not isinstance(data.get('command'), str):
+        return web.json_response({"success": False, "error": "Expected an object with a command string"}, status=400)
     command = data.get("command")
     if command not in ROUTES:
         return web.json_response({"success": False, "error": f"Unknown command: {command}"}, status=400)
@@ -722,13 +731,7 @@ async def health_handler(request):
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logging.info("Starting HAOS-Wayland-Kiosk REST API...")
-    if not API_TOKEN:
-        logging.info(
-            "Kiosk control API token (api_token) is not set; the loopback-only "
-            "API does not require a Bearer token. This option is an app-local "
-            "shared secret, not a Home Assistant long-lived access token."
-        )
-
+    asyncio.create_task(credential_login(OPTIONS, cdp_page_command))
     asyncio.create_task(report_browser_timezone())
     asyncio.create_task(chromium_watchdog())
     logging.info("Chromium Watchdog initialized.")
@@ -738,18 +741,18 @@ async def main():
     asyncio.create_task(memory_reporter())
     logging.info("Memory reporter initialized (one line every %ds).", MEMORY_LOG_INTERVAL)
 
-    app = web.Application()
-    app.router.add_post('/api', api_handler)
-    app.router.add_get('/api/health', health_handler)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-
-    # Loopback bind is the security boundary here; see docs/security.md.
-    site = web.TCPSite(runner, '127.0.0.1', 8034, reuse_address=True)
-    await site.start()
-
-    logging.info("API listening on 127.0.0.1:8034. Ready for Home Assistant commands.")
+    if OPTIONS.get('control_api_enabled', False):
+        app = web.Application(client_max_size=16 * 1024)
+        app.router.add_post('/api', api_handler)
+        app.router.add_get('/api/health', health_handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        # Bridge-only container; no published ports. Core uses the app DNS name.
+        site = web.TCPSite(runner, '0.0.0.0', 8034, reuse_address=True)  # nosec B104
+        await site.start()
+        logging.info('Authenticated control API available on the internal app network, port 8034.')
+    else:
+        logging.info('Control API disabled; browser watchdog remains active.')
 
     await asyncio.Event().wait()
 

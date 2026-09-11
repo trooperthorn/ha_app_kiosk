@@ -1,5 +1,9 @@
 #!/usr/bin/env bashio
 
+# Fail before starting services when security settings or trust are invalid.
+python3 /app/prepare_runtime.py
+unset SUPERVISOR_TOKEN HASSIO_TOKEN
+
 bashio::log.info "================ SYSTEM DIAGNOSTICS ================"
 
 # 1. Check GPU / DRM devices
@@ -53,6 +57,7 @@ bashio::log.info "Configuring Wayland runtime environment..."
 export XDG_RUNTIME_DIR=/tmp/xdg
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
+chown kiosk:kiosk "$XDG_RUNTIME_DIR"
 
 # HOME must be set for Chromium and the launcher wrapper's stat check; see
 # docs/operations.md.
@@ -74,7 +79,7 @@ export SEATD_SOCK=/run/seatd.sock
 export LIBSEAT_BACKEND=seatd
 export SEATD_VTBOUND=0  # Tells seatd not to look for a physical TTY/VT
 
-seatd -g root &
+seatd -g kiosk &
 
 for i in $(seq 1 10); do
     if [ -S "$SEATD_SOCK" ]; then
@@ -90,7 +95,7 @@ fi
 
 unset DISPLAY
 unset WAYLAND_DISPLAY
-export WLR_BACKEND=drm
+export WLR_BACKENDS=drm
 # Do NOT set WLR_LIBINPUT_NO_DEVICES=1; that disables the touchscreen too.
 
 # Options are read from Supervisor's validated /data/options.json; see
@@ -126,17 +131,15 @@ else
     bashio::log.warning "${OPTIONS_FILE} is missing or invalid; documented defaults will be used."
 fi
 
-URL=$(read_option 'ha_url' 'http://127.0.0.1:8123')
+URL=$(python3 -c 'import sys; sys.path.insert(0,"/app"); from security_config import effective_ha_url,load_options; print(effective_ha_url(load_options()))')
 HA_DASHBOARD=$(read_option 'ha_dashboard' 'lovelace')
 BROWSER_REFRESH=$(read_option 'browser_refresh' '12000')
 ROTATION_CONFIG=$(read_option 'rotate_display' 'right')
 SCREEN_TIMEOUT=$(read_option 'screen_timeout' '0')
-AUTH_METHOD=$(read_option 'auth_method' 'trusted_networks')
-HA_USERNAME=$(read_option 'ha_username' '')
-HA_PASSWORD=$(read_option 'ha_password' '')
-LOGIN_DELAY=$(read_option 'login_delay' '10')
-IGNORE_CERTIFICATE_ERRORS=$(read_option 'ignore_certificate_errors' 'true')
-LOCK_NAVIGATION=$(read_option 'lock_navigation' 'false')
+AUTH_METHOD=$(read_option 'auth_method' 'none')
+AUDIO_ENABLED=$(read_option 'audio_enabled' 'true')
+ALLOW_HTTP=$(read_option 'allow_http' 'true')
+LOCK_NAVIGATION=$(read_option 'lock_navigation' 'true')
 DARK_MODE=$(read_option 'dark_mode' 'true')
 
 # Append the dashboard path (default "lovelace", HA's Overview page).
@@ -154,89 +157,13 @@ bashio::log.info "Kiosk will load: ${URL}"
 # exported here rather than with the other Chromium exports at the bottom.
 export KIOSK_URL="$URL"
 export KIOSK_LOCK_NAVIGATION="$LOCK_NAVIGATION"
-
-# Navigation lockdown. Chromium reads managed policy from disk only at
-# startup, so the file is written before Cage launches the browser; see
-# docs/design.md. All three directories are written because the path depends
-# on how the Chromium package was built.
-CHROMIUM_POLICY_DIRS="/etc/chromium/policies/managed /etc/chromium-browser/policies/managed /etc/opt/chrome/policies/managed"
-CHROMIUM_POLICY_NAME="kiosk-lockdown.json"
-
-# Always clear a policy left by a previous run first, so turning the option
-# back off actually unlocks the browser.
-for policy_dir in $CHROMIUM_POLICY_DIRS; do
-    rm -f "${policy_dir}/${CHROMIUM_POLICY_NAME}" 2>/dev/null || true
-done
-
-KIOSK_ORIGIN=$(python3 - "$URL" <<'ORIGINEOF'
-import sys
-from urllib.parse import urlsplit
-
-parts = urlsplit(sys.argv[1])
-if parts.scheme and parts.netloc:
-    # Any credentials in the URL are not part of a policy pattern.
-    print("%s://%s" % (parts.scheme, parts.netloc.rsplit("@", 1)[-1]))
-ORIGINEOF
-)
-
-if bashio::var.true "$LOCK_NAVIGATION"; then
-    if [ -z "$KIOSK_ORIGIN" ]; then
-        bashio::log.error "lock_navigation is on but '${URL}' has no usable scheme and host -- no Chromium policy was written and the browser stays unrestricted."
-    else
-        for policy_dir in $CHROMIUM_POLICY_DIRS; do
-            mkdir -p "$policy_dir"
-        done
-        if python3 - "$KIOSK_ORIGIN" "$CHROMIUM_POLICY_NAME" $CHROMIUM_POLICY_DIRS <<'POLICYEOF'
-import json
-import os
-import sys
-
-origin, policy_name = sys.argv[1:3]
-policy = {
-    # Block every URL, then re-allow exactly the Home Assistant origin. The
-    # allowlist entry carries no path, so every dashboard, the auth flow and
-    # the frontend's own assets keep working, while anything else -- another
-    # host, a file:// URL, chrome:// pages -- is refused by the browser
-    # itself rather than by anything this app has to police at runtime.
-    "URLBlocklist": ["*"],
-    "URLAllowlist": [origin],
-    # A second window on a kiosk cannot be closed without a keyboard.
-    "DefaultPopupsSetting": 2,
-    "IncognitoModeAvailability": 1,
-    "BrowserSignin": 0,
-    "SyncDisabled": True,
-    "DefaultSearchProviderEnabled": False,
-    "PasswordManagerEnabled": False,
-    "AutofillAddressEnabled": False,
-    "AutofillCreditCardEnabled": False,
-    "BookmarkBarEnabled": False,
-    "EditBookmarksEnabled": False,
-    "TranslateEnabled": False,
-    "PrintingEnabled": False,
-    "PromptForDownloadLocation": False,
-    "DownloadRestrictions": 3,  # 3 = block every download
-    "AllowFileSelectionDialogs": False,
-    "AllowDinosaurEasterEgg": False,
-}
-# DeveloperToolsAvailability is deliberately absent: this app drives Chromium
-# over the DevTools protocol for the watchdog, screenshots and refresh. See
-# docs/decisions.md.
-payload = json.dumps(policy, indent=2) + "\n"
-for directory in sys.argv[3:]:
-    path = os.path.join(directory, policy_name)
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(payload)
-    os.chmod(path, 0o644)
-POLICYEOF
-        then
-            bashio::log.info "Navigation lockdown ON: Chromium may only load ${KIOSK_ORIGIN}; every other URL is blocked by managed policy."
-        else
-            bashio::log.error "Failed to write the Chromium lockdown policy -- the browser is starting UNRESTRICTED."
-        fi
-    fi
-else
-    bashio::log.info "Navigation lockdown OFF: the browser can follow links off ${KIOSK_ORIGIN:-the dashboard}. Set lock_navigation to true to pin it to that origin."
+if [ "$(read_option 'ignore_certificate_errors' 'false')" = "true" ]; then
+    bashio::log.warning "Legacy certificate bypass is ignored. To trust a self-signed server, enable allow_self_signed and supply its public PEM certificate."
 fi
+
+# Policies apply even when navigation lockdown is off. A write failure
+# stops startup rather than launching an unrestricted browser.
+python3 /app/browser_policy.py "$URL"
 
 # Dynamic hardware discovery (display & touch). Static fallbacks below are
 # used only if auto-discovery fails.
@@ -295,7 +222,11 @@ export CAGE_TOUCH_OUTPUT="$ACTIVE_OUTPUT"
 # Wait for Home Assistant to serve HTTP before launching the browser
 # (boot ordering); see docs/design.md.
 ha_wait=0
-until curl -ks --max-time 3 -o /dev/null "$URL"; do
+curl_args=(-s --max-time 3 -o /dev/null --proto '=http,https')
+if [ -f /data/browser-home/local-trust.pem ]; then
+    curl_args+=(--cacert /data/browser-home/local-trust.pem)
+fi
+until curl "${curl_args[@]}" "$URL"; do
     ha_wait=$((ha_wait + 5))
     if [ "$ha_wait" -ge 300 ]; then
         bashio::log.warning "No HTTP response from ${URL} after 300s. Launching the browser anyway -- it may show a connection error until Home Assistant is reachable."
@@ -370,113 +301,15 @@ else
     bashio::log.info "Periodic browser refresh disabled."
 fi
 
-# Log the browser's open pages for diagnosis; see docs/operations.md.
-(
-    for wait_s in 30 60; do
-        sleep "$wait_s"
-        curl -s --max-time 3 http://127.0.0.1:9222/json 2>/dev/null | python3 -c "
-import json, sys
-try:
-    targets = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-pages = [t.get('url', '?') for t in targets if t.get('type') == 'page']
-print('Browser reports %d open page(s) (address bar contents):' % len(pages))
-for url in pages:
-    print('  ' + url)
-" | while IFS= read -r line; do
-            bashio::log.info "$line"
-        done || true
-    done
-) &
-
-# Login handling. trusted_networks requires Core-side configuration this
-# app cannot set itself; see wayland-kiosk/DOCS.md. credentials types the
-# login form once detected via CDP polling rather than a blind fixed delay.
-case "$AUTH_METHOD" in
-    "trusted_networks")
-        bashio::log.info "Using trusted_networks auth. Ensure Home Assistant Core's configuration.yaml has a matching trusted_networks provider for 127.0.0.1."
-        ;;
-    "credentials")
-        if [ -z "$HA_USERNAME" ] || [ -z "$HA_PASSWORD" ]; then
-            bashio::log.warning "auth_method is 'credentials' but ha_username/ha_password are not both set -- skipping auto-login."
-        else
-            (
-                wl_display=$(wait_for_wayland_socket) || {
-                    bashio::log.warning "Wayland socket unavailable -- skipping credential auto-login."
-                    exit 0
-                }
-                export WAYLAND_DISPLAY="$wl_display"
-
-                # Truncate to whole seconds; bash [ -lt ] needs an integer
-                # but login_delay is float(0,). See docs/operations.md.
-                login_delay_int="${LOGIN_DELAY%.*}"
-                if [ -z "$login_delay_int" ]; then
-                    login_delay_int=10
-                fi
-
-                elapsed=0
-                found=0
-                while [ "$elapsed" -lt "$login_delay_int" ]; do
-                    page_url=$(curl -s --max-time 2 http://localhost:9222/json 2>/dev/null | python3 -c '
-import json, sys
-try:
-    pages = json.load(sys.stdin)
-    print(next((p.get("url", "") for p in pages if p.get("type") == "page"), ""))
-except Exception:
-    pass
-' || true)
-                    if echo "$page_url" | grep -q "auth/authorize"; then
-                        found=1
-                        break
-                    fi
-                    sleep 1
-                    elapsed=$((elapsed + 1))
-                done
-
-                if [ "$found" -eq 1 ]; then
-                    bashio::log.info "Login page detected, submitting credentials..."
-                    sleep 1  # let the page finish rendering/focusing the username field
-                    wtype "$HA_USERNAME"
-                    wtype -k Tab
-                    wtype "$HA_PASSWORD"
-                    wtype -k Return
-                else
-                    bashio::log.warning "Login page not detected within ${login_delay_int}s -- skipping auto-login. Consider raising login_delay."
-                fi
-            ) &
-        fi
-        ;;
-    "none")
-        bashio::log.info "auth_method is 'none' -- no login handling will be attempted."
-        ;;
-esac
+# Credential entry is performed by the API's origin-checked CDP task.
+# No username/password is passed to a process argument or keyboard focus.
+if [ "$AUTH_METHOD" = "trusted_networks" ]; then
+    bashio::log.warning "Bridge networking no longer uses Core's loopback trusted-network rule. Prefer a persistent non-admin login; update Core's trusted-user mapping only for this app's actual address."
+fi
 
 # Chromium runtime. Launch flags are explained in docs/operations.md; the
 # persistent profile and its exit-state patching are explained in
 # docs/design.md and docs/decisions.md.
-CHROMIUM_PROFILE="/data/chromium-profile"
-CHROMIUM_PREFS="${CHROMIUM_PROFILE}/Default/Preferences"
-if [ -f "$CHROMIUM_PREFS" ]; then
-    python3 - "$CHROMIUM_PREFS" <<'PYEOF' || bashio::log.warning "Could not rewrite Chromium exit state -- session restore may stack tabs."
-import json, sys
-path = sys.argv[1]
-with open(path) as f:
-    prefs = json.load(f)
-profile = prefs.setdefault("profile", {})
-profile["exit_type"] = "Normal"
-profile["exited_cleanly"] = True
-# 5 = RestoreOnStartup "open the New Tab page"; see docs/design.md.
-session = prefs.setdefault("session", {})
-session["restore_on_startup"] = 5
-# A zoom level persisted by an earlier session must not outlive a restart; see docs/operations.md.
-prefs.setdefault("partition", {})["per_host_zoom_levels"] = {}
-with open(path, "w") as f:
-    json.dump(prefs, f)
-PYEOF
-fi
-rm -rf "${CHROMIUM_PROFILE}/Default/Sessions" 2>/dev/null || true
-
 # Launch the real chromium binary directly, bypassing the launcher wrapper
 # and its broken BusyBox stat check; see docs/operations.md.
 CHROMIUM_BIN="/usr/lib/chromium/chromium"
@@ -488,9 +321,9 @@ export CHROME_DESKTOP="chromium.desktop"
 export KIOSK_ROTATION="$ROTATION_CONFIG"
 export KIOSK_ROTATION_TRANSFORM="$ROTATION_DEGREES"
 export KIOSK_CHROMIUM_BIN="$CHROMIUM_BIN"
-export KIOSK_IGNORE_CERTIFICATE_ERRORS="$IGNORE_CERTIFICATE_ERRORS"
+export KIOSK_AUDIO_ENABLED="$AUDIO_ENABLED"
 export KIOSK_DARK_MODE="$DARK_MODE"
 
 bashio::log.info "Starting Cage with Chromium pointing to: ${URL}"
 
-exec /usr/local/bin/cage -s -- /app/launch-browser.sh
+exec python3 /app/prepare_runtime.py launch /usr/local/bin/cage -s -- /app/launch-browser.sh

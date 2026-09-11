@@ -1,152 +1,126 @@
-# Security
+# Security boundaries and operating requirements
 
-## `host_network: true`
+This app runs with Home Assistant Protection mode enabled. It requests no
+host networking, host PID/IPC/D-Bus, full_access, Docker API, Supervisor API
+role escalation, or extra Linux capabilities. Device access comes from the
+selected GPU and input options. The udev database is read-only. There are no
+shared filesystem mappings; only the app-private /data volume persists.
 
-`config.yaml` sets `host_network: true` so that the configured `ha_url`
-(default `http://127.0.0.1:8123`) reaches the real Home Assistant Core
-instance. With `host_network` off, `127.0.0.1` inside the container would
-resolve to the container's own loopback, not the host's, and the kiosk
-could never reach Core over that address. This also means Core's
-`trusted_networks` auth provider sees this app's requests as originating
-from `127.0.0.1`/`::1` and trusts them by address alone -- see
-`wayland-kiosk/DOCS.md` for the `auth_providers` configuration this
-requires on the Core side, and the loopback-bind note below for how this
-setting also affects the app's own control API.
+## Process separation and AppArmor
 
-## REST control API: loopback bind is the actual boundary
+Root performs bounded setup and runs seatd plus the control/watchdog service.
+Cage and Chromium run as uid 1000 (kiosk). Browser launch strips Supervisor
+service tokens and credentials from its environment. Options are root-only;
+profile and certificate databases belong to kiosk. Profile rewrites and
+certificate imports run as kiosk, never as root over browser-writable files.
+Chromium's namespace and seccomp sandboxes stay enabled. The GPU shader disk
+cache is disabled to avoid a reproduced pwritev2 sandbox failure in the Alpine
+GPU cache path; GPU rendering and video decoding are not disabled in production.
 
-`rest_server.py` binds to `127.0.0.1:8034` only, never `0.0.0.0`. This
-matters specifically because `config.yaml` sets `host_network: true` (see
-below): with host networking, binding to `0.0.0.0` would expose the control
-API -- which can redirect the kiosk browser and power the physical display
-off -- to the entire local network, not just this container's host. If a
-command needs to reach this API from another host, the intended path is a
-Home Assistant automation calling it through Supervisor/Core rather than
-widening the bind address.
+The custom apparmor.txt confines root setup separately from Chromium. The
+browser subprofile cannot read options.json or arbitrary root/shared HA files.
+Its namespace capabilities apply within the unprivileged browser sandbox;
+they are not host capabilities requested by config.yaml. CI must validate the
+profile with an enforcing kernel. Syntax-only validation on WSL is insufficient.
+The Supervisor currently supplies seccomp=unconfined at the container layer;
+Chromium's own seccomp layer is separate and verified in the browser test.
 
-`api_token` (enforced when set) is an app-local shared secret checked
-against the `Authorization: Bearer <token>` header on every `/api` request.
-It is not, and must not be treated as, a Home Assistant long-lived access
-token -- it authenticates callers to this loopback-only API, nothing else.
-When unset, the API accepts any request that can reach the loopback
-address, which is only this container and, because of `host_network: true`,
-other processes on the same host.
+## Security rating
 
-## Command whitelist in `rest_server.py`
+The rating is calculated by Supervisor, not a configurable number. Its current
+rating_security implementation gives this manifest an expected 8/8 once the
+custom AppArmor profile is installed: base 5 + custom profile 1 + private
+network/no published ports 2. The former host-network/default-profile design
+scored 4/8 under the same formula. No signed-image bonus is claimed. Without a
+loaded custom profile the score may be lower. Keep Protection mode enabled and
+verify the installed profile; a score is not proof against vulnerabilities.
 
-`execute_command` and `start_background_command` refuse to run anything
-whose argv[0] is not in `ALLOWED_COMMANDS = {"wlr-randr", "wtype",
-"killall", "swayidle"}`. Every invocation goes through
-`asyncio.create_subprocess_exec`, which calls `execve()` directly and never
-invokes a shell, so there is no shell-metacharacter injection surface
-regardless of caller-supplied arguments; the whitelist is the actual
-control, not shell escaping. This applies even to the `wlr_randr` endpoint,
-which splits caller-supplied `args` with `shlex.split` and passes the
-result straight through to `execve()` as argv -- a caller who can reach the
-API can only ever run one of the four whitelisted binaries.
+Source: https://github.com/home-assistant/supervisor/blob/b44b4acbc21768765f70089c90d1a4d9daee5d48/supervisor/apps/utils.py
+Guidance: https://github.com/home-assistant/developers.home-assistant/blob/master/docs/apps/security.md
 
-## `/api/health` is deliberately unauthenticated
+## Networking and control
 
-`GET /api/health` is the one route on the REST control API (`docs/operations.md`)
-that skips the `api_token` check. It returns only read-only status --
-process uptime, whether the output is on, whether the page is currently
-frozen for power saving, and whether the Chromium watchdog considers the
-renderer responsive -- never anything from the `ALLOWED_COMMANDS`
-whitelist. The same loopback bind that scopes the rest of the API scopes
-this route too: it is reachable only from this container and, because
-`config.yaml` sets `host_network: true`, other processes on the same
-host. A monitoring tool that only needs to know the kiosk is alive should
-poll this route rather than being handed a copy of `api_token`.
+Core is reached on the Supervisor bridge, normally http://homeassistant:8123.
+The control API is disabled by default. When enabled, it requires a 32-character
+or longer token, constant-time authentication, JSON object requests, and no
+browser Origin header. It listens on the internal app interface with no host
+port publication. Health is read-only and intentionally unauthenticated on
+that internal interface. Chromium CDP binds only container loopback; other
+apps cannot directly reach it. Other internal apps can reach the enabled API
+but still require its token for commands. HTTP is appropriate to the local
+app network when explicitly enabled; do not expose this API through a proxy
+or publish its port without designing that additional authentication boundary.
 
-## Navigation lockdown (`lock_navigation`)
+Invalid/unreadable options fail startup. Command execution remains an explicit
+binary allowlist using exec arguments, not a shell. Timed-out child commands
+are killed and reaped. Browser navigation validates HTTP/HTTPS URLs and honors
+allow_http and optional same-origin lockdown. Lockdown defaults on; failure
+to write browser policy aborts startup. It is navigation control, not a network
+firewall or Home Assistant entity permission system. Use a non-admin kiosk user.
 
-Off by default. When on, `run.sh` writes a Chromium managed policy before
-Cage launches the browser: `URLBlocklist: ["*"]` with a single
-`URLAllowlist` entry naming the scheme, host and port of `ha_url`. The
-enforcement point is Chromium itself, not this app -- nothing at runtime has
-to notice a navigation and undo it -- and the policy is read only at browser
-startup, which is why it is written before launch and removed on any start
-where the option is off. It is written to all three managed-policy
-directories a Chromium package may use.
+## Local HTTP and self-signed HTTPS
 
-The same file disables popups, downloads, printing, incognito, browser
-sign-in, sync, autofill, the password manager and bookmark editing, and
-`launch-browser.sh` adds `--block-new-web-contents` so no second window can
-be created at all. `DeveloperToolsAvailability` is deliberately not set; see
-docs/decisions.md.
+allow_http defaults true, preserving normal local HTTP operation. Turning it
+off requires HTTPS for configured/API navigation and blocks HTTP navigation
+with browser policy. Subresource transport and external servers remain subject
+to normal browser mixed-content rules; this option is not an egress firewall.
 
-Two limits are worth stating rather than implying:
+allow_self_signed is an explicit trust option, not a global certificate bypass.
+It requires one public PEM certificate in self_signed_certificate. The trusted
+server/CA is imported into this browser's NSS database; hostname and expiry
+validation remain active. Trust is removed when disabled or replaced. The
+readiness probe uses the same supplied certificate. The old
+ignore_certificate_errors flag is retained only to accept old configurations;
+it is ignored with a migration warning, and --ignore-certificate-errors is
+never passed. Private keys are rejected and unnecessary.
 
-- The policy filters navigations, not subresources. The dashboard's own
-  requests for images, tiles and fonts from other hosts are unaffected --
-  which is why a map card still works, and also why "cannot reach another
-  host at all" is not what this option provides.
-- Home Assistant's frontend routes client-side, so moving from the dashboard
-  to Settings or Developer tools is invisible to any URL policy. The
-  supported answer is a non-admin Home Assistant user for the kiosk;
-  `return_to_dashboard` polls and navigates home as a tidy-up on top of
-  that, not as an access control.
+## Audio and devices
 
-The threat model is a visitor with a touchscreen. It is not a defense
-against anyone with a keyboard, physical access, or the ability to edit
-add-on options.
+audio_enabled defaults true. Disabled means browser mute, blocked sound policy,
+and no usable PulseAudio connection in the desktop environment. Microphone and
+camera capture are disabled by policy in either mode (camera dashboard playback
+is unaffected). Supervisor's audio:true mount is static and retained to support
+the toggle; a runtime option cannot remove a Supervisor mount.
 
-While the lock is on, `launch_url` on the control API rejects any URL that
-is not on the same origin, so an automation gets an error instead of a
-blocked page on the wall. `/api/health` exposes the state as
-`navigation_locked`.
+Only selected gpu_devices and input_devices receive Supervisor device access.
+The empty default input list must be configured for touch; do not grant all
+input nodes to avoid identifying the actual screen. No device chmod/chown is
+performed on the host. seatd brokers compositor access, and only the selected
+GPU group IDs are added to the non-root desktop for render-node access.
 
-## Screenshot command returns dashboard content
+## Login and stored secrets
 
-The `screenshot` command captures whatever is currently rendered --
-which, on this app, is the live Home Assistant dashboard -- and returns
-it as base64 image data in the JSON response. It goes through the same
-`api_token` check as every other command; there is no separate exposure
-here beyond what a caller who can already run `launch_url` or
-`refresh_browser` could see by other means.
+Persistent manual login is the default. Optional credential mode retains
+root-readable HA credentials in options but never passes them to argv or
+keyboard focus. A single browser execution verifies the exact trusted origin,
+login path, and same-origin form before filling/submitting; if the form does
+not match, entry is skipped. Page compromise on the trusted HA origin remains
+a risk; a non-admin account and maintained dashboard dependencies are required.
 
-## Device permissions: explicit nodes, not `full_access`
+Existing loopback trusted-network rules do not identify the app after network
+migration. Prefer manual login; if retaining trusted_networks, map only the
+verified app address to a specific non-admin user, never the whole subnet.
 
-`config.yaml` lists individual device nodes under `devices:`
-(`/dev/dri/card0`, `/dev/dri/renderD128`, `/dev/input/event0`-`event25`,
-...) instead of `full_access: true`. `full_access: true` grants every
-device on the host; this app only ever needs the GPU/DRM nodes and the
-input event nodes it discovers at runtime, so the explicit list is the
-minimum grant Supervisor's udev-backed device model supports. See
-`docs/operations.md` for why the list must be individual nodes rather than
-directories, and why over-listing nonexistent nodes is safe.
+## Build and release security
 
-## Base image package patching
+Test, Validate, and Security workflows all gate publication for the release
+commit. Security scans all runtime Python files. The vulnerability inventory
+retains unfixed findings; every fixable High/Critical finding blocks release,
+with no vulnerability-ID exclusions. The unused base-image tempio executable
+was removed to eliminate its embedded vulnerable Go dependencies. Startup does
+not use it. The Alpine base image digest and aiohttp version are pinned.
 
-The Dockerfile runs `apk upgrade --no-cache` right after `FROM`, before
-installing anything else, so the image ships current Alpine security
-patches rather than whatever was cached when `ghcr.io/home-assistant/base`
-was last built. This was added 2026-09-03 after the app-image-security
-CI job (Grype, `severity-cutoff: high`) found `libssl3`/`libcrypto3`
-3.5.7-r0 with fixed High-severity CVEs already published at 3.5.8-r0.
+OS packages still receive current apk security updates, so later source builds
+can differ from the CI image. Retain scan inventories and verify the installed
+image when an exact deployment assessment is needed. This repository distributes
+source-built apps, not signed prebuilt registry images; image signing is a
+separate distribution change and no signing assurance is claimed here.
 
-## Image vulnerability scan scope
+## Required hardware acceptance
 
-The app-image-security CI job (Grype) runs with `only-fixed: true` and a
-`.grype.yaml` ignore list, added 2026-09-03 after the first run of this
-newly added gate. Chromium and ffmpeg between them always carry a large
-number of disclosed, currently-unfixed-in-the-packaged-version CVEs; Alpine
-edge's `chromium` package alone showed over 150 High/Critical findings with
-no `FIXED IN` version at all. Failing CI on every one of those would
-permanently block merges rather than catch anything this repository can
-act on, so the gate is scoped to findings where a fix is actually
-available. `.grype.yaml` additionally ignores a specific set of
-golang.org/x/crypto and Go stdlib CVEs that Grype reports as fixed
-upstream but that live in Go binaries compiled into the
-`ghcr.io/home-assistant/base` image itself, not in anything this
-Dockerfile installs -- there is no `apk add` or `pip install` change here
-that resolves them. Re-check both scopes whenever `BUILD_FROM`'s effective
-Alpine version changes.
-
-## AppArmor stays on
-
-`config.yaml` does not set `apparmor: false`, and should not. That was
-tried once against an earlier `/dev/dri` "Operation not permitted" crash;
-it did not fix the crash (the real cause was malformed `devices:` entries,
-see `docs/decisions.md`) and only removed the app's security confinement
-with no offsetting benefit.
+After installing this breaking release, verify actual AppArmor enforcement,
+selected DRM/input nodes, non-root desktop, touch mapping, rotation, camera
+decode, optional audio, blank/wake, login persistence, API automation routing,
+and watchdog recovery on HAOS. Headless CI cannot prove physical hardware
+operation. Never disable protection or add broad capabilities to hide a denial;
+inspect the denial and adjust the narrow profile if required.

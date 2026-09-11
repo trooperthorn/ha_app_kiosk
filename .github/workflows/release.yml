@@ -25,9 +25,16 @@ jobs:
     permissions:
       contents: read
 
+  security:
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
   release:
     if: github.ref == 'refs/heads/main'
-    needs: [tests, validate]
+    needs: [tests, validate, security]
     runs-on: ubuntu-latest
     permissions:
       contents: write

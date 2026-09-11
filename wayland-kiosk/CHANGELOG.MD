@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026.09.11.2 - Security isolation (breaking setup change)
+
+- Move to the private app network; select GPU/input devices and update control
+  automations before starting. The old loopback trusted-login rule no longer applies.
+- Run Cage/Chromium as a non-root desktop user with sandboxing and a custom
+  AppArmor profile; remove unused writable shared mounts and service tokens.
+- Add Allow HTTP (default on), explicit self-signed certificate trust (default
+  off), and Enable audio (default on). Global TLS bypass is retired.
+- Require authentication for the optional control API, reject browser-origin
+  and malformed requests, and verify the HA origin before credential entry.
+- Gate release on security checks, remove vulnerability exclusions and unused
+  vulnerable tempio, pin the base digest and aiohttp, retain full scan reports.
+- Expected Supervisor rating 8/8 when the custom profile is active; Protection
+  mode stays enabled. Physical HAOS display/AppArmor acceptance remains required.
+
 ## Unreleased
 
 - Add a Time zone setting defaulting to America/Chicago for Central Time
