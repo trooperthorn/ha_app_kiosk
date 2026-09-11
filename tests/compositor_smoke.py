@@ -7,8 +7,9 @@ import time
 import urllib.request
 
 Path('/data').mkdir(exist_ok=True)
-Path('/data/options.json').write_text('{}')
+Path('/data/options.json').write_text(json.dumps({'lock_navigation': False, 'audio_enabled': False}))
 subprocess.run(['python3', '/app/prepare_runtime.py'], check=True)
+subprocess.run(['python3', '/app/browser_policy.py', 'http://homeassistant:8123'], check=True)
 env = {**os.environ, 'XDG_RUNTIME_DIR': '/tmp/xdg', 'WLR_BACKENDS': 'headless',
        'KIOSK_OUTPUT': 'HEADLESS-1', 'KIOSK_ROTATION_TRANSFORM': 'normal',
        'KIOSK_ROTATION': 'normal', 'KIOSK_AUDIO_ENABLED': 'false',

@@ -20,8 +20,7 @@ RUN apk upgrade --no-cache
 # mesa-va-gallium supplies radeonsi_drv_video.so so Chromium can decode
 # AMD-accelerated H.264/VP8/VP9 camera streams instead of falling back to CPU.
 # libva-utils supplies vainfo for a concise startup capability probe.
-# curl added: run.sh polls Chromium's CDP endpoint (http://localhost:9222/json)
-# to detect the HA login page before typing credentials.
+# curl provides the Home Assistant readiness probe.
 RUN apk add --no-cache \
     cage \
     chromium \
@@ -89,6 +88,9 @@ RUN apk add --no-cache --virtual .cage-build-deps \
 
 # A dedicated desktop user; privileged setup and options remain root-owned.
 RUN addgroup -g 1000 kiosk && adduser -D -u 1000 -G kiosk -h /data/browser-home kiosk
+
+# Create policy directories at build time; runtime only writes managed policy files.
+RUN mkdir -p /etc/chromium/policies/managed /etc/chromium-browser/policies/managed /etc/opt/chrome/policies/managed
 
 # Copy the execution script and API server into the container
 COPY run.sh /run.sh
