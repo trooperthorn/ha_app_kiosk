@@ -55,6 +55,18 @@ jobs:
         run: |
           sudo apparmor_parser -r wayland-kiosk/apparmor.txt
           sudo aa-status
+      - name: Verify real init and root setup under AppArmor
+        run: |
+          mkdir -p "$RUNNER_TEMP/kiosk-data"
+          printf '%s' '{"ha_url":"http://192.0.2.1:8123","input_devices":[]}' > "$RUNNER_TEMP/kiosk-data/options.json"
+          trap 'docker logs kiosk-init; docker rm -f kiosk-init >/dev/null' EXIT
+          docker run -d --name kiosk-init --security-opt seccomp=unconfined --security-opt apparmor=app_kiosk -v "$RUNNER_TEMP/kiosk-data:/data" local/app-kiosk:${{ github.sha }}
+          for attempt in $(seq 1 20); do
+            if docker logs kiosk-init 2>&1 | grep -q "Rotation config"; then exit 0; fi
+            test "$(docker inspect -f '{{.State.Running}}' kiosk-init)" = true
+            sleep 1
+          done
+          exit 1
       - name: Verify browser under enforced AppArmor
         run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_security_smoke.py
       - name: Verify Cage and production launcher under AppArmor
