@@ -70,6 +70,7 @@ options:
   return_to_dashboard: 0
   ha_sidebar: "none"
   ha_theme: ""
+  time_zone: "America/Chicago"
   dark_mode: true
   screen_timeout: 0
   rotate_display: "right"
@@ -90,6 +91,7 @@ schema:
   return_to_dashboard: int(0,)
   ha_sidebar: list(full|narrow|none)
   ha_theme: str?
+  time_zone: str?
   dark_mode: bool
   screen_timeout: int(0,)
   rotate_display: list(normal|left|right|inverted)

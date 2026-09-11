@@ -334,6 +334,25 @@ async def current_page_url() -> Optional[str]:
     return next((t.get("url", "") for t in targets if t.get("type") == "page"), None)
 
 
+async def report_browser_timezone():
+    """Read the real renderer's timezone once it is available at startup."""
+    for _ in range(12):
+        await asyncio.sleep(10)
+        result = await cdp_page_command(
+            "Runtime.evaluate",
+            {"expression": "JSON.stringify({zone: Intl.DateTimeFormat().resolvedOptions().timeZone, local: new Date().toString()})",
+             "returnByValue": True},
+            timeout=5,
+            log_failure=False,
+        )
+        if result["success"]:
+            value = result["result"].get("result", {}).get("value")
+            if isinstance(value, str):
+                logging.info("Chromium time zone: %s (requested TZ=%s)", value, os.environ.get("TZ", "unset"))
+                return
+    logging.warning("Could not verify Chromium time zone at startup.")
+
+
 # CHROME WATCHDOG
 async def chromium_watchdog():
     """Recover a persistently frozen page without killing a busy renderer.
@@ -710,6 +729,7 @@ async def main():
             "shared secret, not a Home Assistant long-lived access token."
         )
 
+    asyncio.create_task(report_browser_timezone())
     asyncio.create_task(chromium_watchdog())
     logging.info("Chromium Watchdog initialized.")
     asyncio.create_task(display_freeze_watcher())
