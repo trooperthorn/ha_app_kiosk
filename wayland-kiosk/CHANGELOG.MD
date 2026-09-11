@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026.09.11.5 - Internal app address logging
+
+- Log the app internal IP addresses and route-selected source address toward
+  Home Assistant, with exact-host CIDR entries for trusted-user authentication.
+- Network diagnostics are bounded and nonfatal; no new permissions or API token
+  are needed. Document direct-route versus proxy/NAT address differences.
+
 ## 2026.09.11.4 - Device discovery startup fix
 
 - Permit reading DRM/input directory listings under AppArmor, including DRM

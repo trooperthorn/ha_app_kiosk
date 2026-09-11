@@ -87,7 +87,11 @@ jobs:
           trap 'docker logs kiosk-init; docker rm -f kiosk-init >/dev/null' EXIT
           docker run -d --name kiosk-init --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk -v "$RUNNER_TEMP/kiosk-data:/data" -v "$RUNNER_TEMP/kiosk-devices/dri:/dev/dri:ro" -v "$RUNNER_TEMP/kiosk-devices/input:/dev/input:ro" local/app-kiosk:${{ github.sha }}
           for attempt in $(seq 1 20); do
-            if docker logs kiosk-init 2>&1 | grep -q "Rotation config"; then exit 0; fi
+            if docker logs kiosk-init 2>&1 | grep -q "Rotation config"; then
+              docker logs kiosk-init 2>&1 | grep -q "App internal IP address(es):"
+              docker logs kiosk-init 2>&1 | grep -q "Trusted-network CIDR (direct HA route):"
+              exit 0
+            fi
             test "$(docker inspect -f '{{.State.Running}}' kiosk-init)" = true
             sleep 1
           done

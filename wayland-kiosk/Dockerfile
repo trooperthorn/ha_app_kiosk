@@ -99,7 +99,7 @@ COPY run.sh /run.sh
 COPY launch-browser.sh /app/launch-browser.sh
 COPY rest_server.py /app/rest_server.py
 COPY resolve_timezone.py /app/resolve_timezone.py
-COPY security_config.py prepare_runtime.py browser_policy.py credential_login.py /app/
+COPY security_config.py prepare_runtime.py browser_policy.py credential_login.py network_info.py /app/
 
 # Set execution permissions
 RUN chmod a+x /run.sh /app/launch-browser.sh
