@@ -36,7 +36,7 @@ def prepare():
         [sys.executable, '/app/prepare_runtime.py', 'trust'],
         user=user.pw_uid, group=user.pw_gid, extra_groups=[],
         input=options.get('self_signed_certificate', '') if options.get('allow_self_signed', False) else '',
-        text=True, check=True, env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': str(HOME)},
+        text=True, check=True, env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': str(HOME), 'PYTHONDONTWRITEBYTECODE': '1'},
     )
     return result.returncode
 
