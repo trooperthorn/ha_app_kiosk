@@ -40,6 +40,24 @@ jobs:
               print(f, 'OK')
           "
 
+  apparmor-compatibility:
+    name: HAOS-compatible AppArmor syntax (3.x)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install and verify the legacy parser
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y apparmor
+          apparmor_parser --version | grep 'version 3\.'
+      - name: Parse original and Supervisor-renamed profiles
+        run: |
+          apparmor_parser -Q -K wayland-kiosk/apparmor.txt
+          sed 's/^profile app_kiosk /profile b2ecadf4_app_kiosk /' wayland-kiosk/apparmor.txt > /tmp/kiosk-apparmor.txt
+          apparmor_parser -Q -K /tmp/kiosk-apparmor.txt
+          apparmor_parser -N /tmp/kiosk-apparmor.txt | grep -Fx b2ecadf4_app_kiosk
+          apparmor_parser -N /tmp/kiosk-apparmor.txt | grep -Fx b2ecadf4_app_kiosk//browser
+
   image-build:
     name: App image builds
     runs-on: ubuntu-latest
@@ -53,14 +71,15 @@ jobs:
         run: docker run --rm --security-opt seccomp=unconfined --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_security_smoke.py
       - name: Load enforced AppArmor profile
         run: |
-          sudo apparmor_parser -r wayland-kiosk/apparmor.txt
+          sed 's/^profile app_kiosk /profile b2ecadf4_app_kiosk /' wayland-kiosk/apparmor.txt > /tmp/kiosk-apparmor.txt
+          sudo apparmor_parser -r /tmp/kiosk-apparmor.txt
           sudo aa-status
       - name: Verify real init and root setup under AppArmor
         run: |
           mkdir -p "$RUNNER_TEMP/kiosk-data"
           printf '%s' '{"ha_url":"http://192.0.2.1:8123","input_devices":[]}' > "$RUNNER_TEMP/kiosk-data/options.json"
           trap 'docker logs kiosk-init; docker rm -f kiosk-init >/dev/null' EXIT
-          docker run -d --name kiosk-init --security-opt seccomp=unconfined --security-opt apparmor=app_kiosk -v "$RUNNER_TEMP/kiosk-data:/data" local/app-kiosk:${{ github.sha }}
+          docker run -d --name kiosk-init --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk -v "$RUNNER_TEMP/kiosk-data:/data" local/app-kiosk:${{ github.sha }}
           for attempt in $(seq 1 20); do
             if docker logs kiosk-init 2>&1 | grep -q "Rotation config"; then exit 0; fi
             test "$(docker inspect -f '{{.State.Running}}' kiosk-init)" = true
@@ -68,9 +87,9 @@ jobs:
           done
           exit 1
       - name: Verify browser under enforced AppArmor
-        run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_security_smoke.py
+        run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_security_smoke.py
       - name: Verify Cage and production launcher under AppArmor
-        run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/compositor_smoke.py
+        run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/compositor_smoke.py
       - name: AppArmor denial diagnostics
         if: failure()
         run: sudo journalctl -k --since '20 minutes ago' --no-pager | grep -E 'apparmor|DENIED' || true

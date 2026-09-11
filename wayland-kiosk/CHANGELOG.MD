@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026.09.11.3 - HAOS AppArmor installation compatibility
+
+- Target AppArmor policy ABI 3.0 and remove the unsupported 4.x userns rule
+  that prevents HAOS from installing the app. Keep AppArmor enforcement and
+  Chromium namespace/seccomp sandboxing enabled.
+- Test profile parsing on AppArmor 3.x as well as enforced startup on 4.x,
+  including Supervisor-style repository-prefixed profile names.
+
 ## 2026.09.11.2 - Security isolation (breaking setup change)
 
 - Move to the private app network; select GPU/input devices and update control

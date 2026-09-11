@@ -22,6 +22,11 @@ browser subprofile cannot read options.json or arbitrary root/shared HA files.
 Its namespace capabilities apply within the unprivileged browser sandbox;
 they are not host capabilities requested by config.yaml. CI must validate the
 profile with an enforcing kernel. Syntax-only validation on WSL is insufficient.
+The profile explicitly targets policy ABI 3.0 for HAOS AppArmor 3.x
+compatibility. This ABI permits user namespaces implicitly; newer `userns`
+syntax must not be added because 3.x parsers reject it before installation.
+CI parses the Supervisor-renamed profile with 3.x and verifies sandboxing
+under an enforcing 4.x host.
 The Supervisor currently supplies seccomp=unconfined at the container layer;
 Chromium's own seccomp layer is separate and verified in the browser test.
 
