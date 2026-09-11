@@ -139,21 +139,26 @@ The Supervisor injects Home Assistant's configured time zone into every
 add-on container as `TZ` (`supervisor/docker/app.py` builds the environment
 with `ENV_TIME: self.sys_timezone`), and Core pushes changes to the
 Supervisor on `EVENT_CORE_CONFIG_UPDATE`. The base image ships `tzdata`;
-the Dockerfile also lists it explicitly so the dependency is visible.
-`run.sh` applies `TZ` to `/etc/localtime` and `/etc/timezone` before anything
-else starts, because Chromium's ICU host-zone detection consults `TZ`, then
-`/etc/localtime`, then `/etc/timezone`, and making all three agree removes
-the container as a variable. The dashboard clock is still decided by the
-Home Assistant frontend: a user's profile Time zone setting defaults to
-`local` (the browser's `Intl` zone, see the frontend's
-`resolve-time-zone.ts`), and only `server` uses Home Assistant's zone
-directly. The user-facing guidance is in `wayland-kiosk/DOCS.md`.
+the Dockerfile also lists it explicitly so the dependency is visible. The
+dashboard clock is still decided by the Home Assistant frontend: a user's
+profile Time zone setting defaults to `local` (the browser's `Intl` zone,
+see the frontend's `resolve-time-zone.ts`), and only `server` uses Home
+Assistant's zone directly. The user-facing guidance is in
+`wayland-kiosk/DOCS.md`.
 
-Unverified: whether the Alpine Chromium build resolved UTC on the physical
-kiosk before this change because of a missing `/etc/localtime`, because
-`TZ` was not reaching it, or because the profile was on `local`. The
-startup log line now records the zone the app applied, which narrows this
-on the next report.
+Resolved (was "Unverified" above): a field report confirmed the browser
+reporting UTC while the container's own clock (`date`) was already correct.
+Root cause was PR #29's original implementation: it wrote `TZ` to
+`/etc/localtime` and `/etc/timezone` but never exported `TZ` itself into the
+environment, on the assumption that Chromium's ICU would pick up one of the
+files. Testing the actual bundled Chromium confirmed the fix needed is
+simpler and more direct than that assumption: Chromium reliably follows the
+`TZ` environment variable of its own process, so `run.sh` now resolves a
+zone from `TZ` if present, else `/etc/timezone`, else the `/etc/localtime`
+symlink target — covering the common case where Supervisor (or a bind
+mount) only provides `/etc/localtime` and never sets `TZ` at all — and
+`export`s it, so every child process including Chromium inherits it
+directly.
 
 ## `login_delay` truncation
 
@@ -212,6 +217,49 @@ Android. It also means the page legitimately stops responding to
 watchdog checks `RUNTIME_STATE["display_frozen"]` first and skips its
 check entirely while frozen, rather than treating an intentionally paused
 page as a hang and restarting the container.
+
+## Watchdog: two failure modes that look nothing alike
+
+`chromium_watchdog` recovers two states, and only one of them is a liveness
+problem.
+
+An **unresponsive renderer** (a freeze, or the sad-tab left by a renderer
+crash) fails the CDP probe. Verified against Chromium 141: after
+`Page.crash`, `Runtime.evaluate` times out while the target stays listed in
+`/json` with its original URL, and `Page.reload` recovers it. The reload is
+issued on the first failed probe -- a dead wall panel is the symptom users
+report, and a minute of it is a long time -- but only once per episode, so a
+dashboard that is merely slow to load is not restarted every cycle. The
+three-failure escalation to `killall cage` is unchanged behind that.
+
+A **Chromium error page** is the opposite: the renderer is perfectly healthy
+and answers the probe instantly, so no liveness check will ever see it. This
+is what the kiosk shows when Core was restarting as the page loaded. It is
+detected by what the probe returns rather than whether it returns: the
+watchdog evaluates `document.documentURI`, which costs exactly what
+evaluating `1` cost, and treats a `chrome-error://` prefix as a reload
+trigger. Verified the same way: a navigation to a dead port leaves
+`documentURI` at `chrome-error://chromewebdata/` while `/json` still
+advertises the original URL, which is why the target list cannot be used for
+this and the in-page URI can.
+
+Reloads while the error page persists happen every cycle (Core is usually
+just coming back), and the log line is emitted once per ten cycles so a long
+Core restart does not fill it.
+
+## Memory reporting
+
+`memory_reporter` logs one line every 30 minutes: container usage against
+the cgroup limit (v2 `memory.current`/`memory.max`, falling back to v1), and
+Chromium's summed RSS with a process count and a running peak. The same
+values are on `/api/health`.
+
+The Chromium figure over-reports: the browser is multi-process and RSS
+counts shared pages once per process. It is deliberately a trend line -- the
+question it exists to answer is "does this climb between restarts", which a
+snapshot taken after a crash cannot answer. A cgroup limit reported as
+"unlimited" by v1 is a sentinel near the word size, not a real number, and
+is reported as no limit rather than as an absurd one.
 
 ## CI gate thresholds
 

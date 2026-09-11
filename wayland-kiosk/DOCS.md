@@ -33,7 +33,7 @@ option works because it appears in the UI.
 | `return_to_dashboard` | applied | Seconds between checks that the page is still on the dashboard; if it is not, the browser is navigated back to `ha_url` + `ha_dashboard`. `0` (default) disables the check. |
 | `ha_sidebar` | not applied yet | Accepted by the schema, read nowhere. Hiding the sidebar is better done with the kiosk-mode frontend plugin inside Home Assistant. |
 | `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
-| `dark_mode` | not applied yet | Accepted by the schema, read nowhere. Set dark mode per-user in Home Assistant instead. |
+| `dark_mode` | applied | `true` by default. Starts Chromium with `--force-dark-mode`, so the browser reports `prefers-color-scheme: dark`. Home Assistant follows that only when the kiosk user's theme is set to Auto; see "Always-dark browser" below. |
 
 ## Locking the kiosk to the dashboard
 
@@ -88,6 +88,85 @@ error for anything else, rather than letting Chromium silently show a
 blocked page. `/api/health` reports the current state as
 `navigation_locked`.
 
+## Always-dark browser
+
+`dark_mode: true` (the default) starts Chromium with `--force-dark-mode`.
+That makes the browser report `prefers-color-scheme: dark` to the page,
+which is the signal Home Assistant's own theme handling reads.
+
+The browser flag decides what the page is *told*, not what Home Assistant
+*does* with it. For the dashboard to actually come up dark, the kiosk's
+Home Assistant user must have its theme set to follow the browser: profile,
+Themes, with the mode selector set to **Auto**. A profile pinned to a light
+theme stays light no matter what the browser reports, because at that point
+the user has made an explicit choice and the frontend honors it. Pinning
+the profile to a dark theme (this repository ships `display-kiosk`) is the
+other way to get a guaranteed-dark panel, and it does not depend on this
+option at all.
+
+What this option deliberately does not do is force-darken the page. Chromium
+can invert a page's colors for you (`--enable-features=WebContentsForceDark`),
+and on a frontend that already has a real dark theme the result is worse than
+either theme on its own -- inverted images, washed-out cards, and a second
+darkening pass over already-dark surfaces. See docs/decisions.md.
+
+## The kiosk sits on an error page after Home Assistant restarts
+
+If the panel needs a manual reload "every so often", this is the first thing
+to check, and it is not a resource problem.
+
+When Home Assistant Core restarts -- an update, a YAML reload, a Supervisor
+operation -- the kiosk's page can fail to load and Chromium replaces it with
+its own "This site can't be reached" error page. Before 2026.09.09.x nothing
+recovered that state: the watchdog only ever asked whether the renderer was
+*responsive*, and an error page is a perfectly healthy renderer that answers
+instantly. The page then sat there until someone reloaded it by hand or
+`browser_refresh` came around, which at its default of 12000 seconds is over
+three hours.
+
+The watchdog now reads the document URI on every 30-second cycle. Chromium
+error pages report a `chrome-error://` URI, so the kiosk reloads within
+about 30 seconds of Core coming back, and keeps retrying every 30 seconds
+while it is still down. The log says so, once per five minutes while it
+persists:
+
+```
+Watchdog: the kiosk is showing a browser error page (Home Assistant
+unreachable when the page loaded); reloading. Retrying every 30s until it
+comes back.
+```
+
+A crashed renderer -- the "Aw, Snap" case -- is the other half. That one does
+fail the responsiveness probe, so it was always caught, but the reload used
+to wait for the second failed probe and so left a dead screen for a minute
+or more. The reload now happens on the first failed probe (roughly 15-45
+seconds), once per episode so a merely slow dashboard is not put into a
+reload loop, with the escalation to a container restart unchanged behind it.
+
+## Is it a resource problem?
+
+The app logs one memory line every 30 minutes, so the question can be
+answered from the add-on log instead of guessed at:
+
+```
+Memory: container 812 MiB (21% of 3814 MiB), Chromium 640 MiB across 7
+process(es), peak 690 MiB.
+```
+
+Read it as a trend across a day, not as a single number. Chromium is
+multi-process and RSS counts shared pages once per process, so the Chromium
+figure over-reports; what matters is whether it climbs steadily between
+restarts. A flat line that sits well under the limit means memory is not the
+problem and the error-page case above is the likelier answer. A line that
+climbs until the panel dies is a leak, and the practical mitigation is a
+shorter `browser_refresh` -- 1800 (30 minutes) is a reasonable starting
+point for a dashboard with camera or map cards, which are the usual cause.
+
+`/api/health` reports the same counters live, including `on_error_page`,
+`error_page_reloads` and `unresponsive_reloads`. If `error_page_reloads`
+climbs while `unresponsive_reloads` stays at zero, the panel is losing Home
+Assistant, not running out of memory.
+
 ## Login: trusted_networks that actually bypasses
 
 For `auth_method: trusted_networks`, Home Assistant Core needs an
@@ -136,17 +215,22 @@ browser's time zone" (the default for a new user) and "Use server time zone".
 With the default, the clock shows whatever the kiosk's own browser believes,
 which is the container's time zone.
 
-The app inherits Home Assistant's configured time zone automatically: the
-Supervisor passes it to the container, and on startup the app applies it to
-every place Chromium looks (the `TZ` variable, `/etc/localtime`, and
-`/etc/timezone`), then logs the zone it applied. So with either profile
-setting the clock should match Settings, System, General, Time zone.
+The app resolves Home Assistant's configured time zone automatically on
+startup, whether Supervisor provides it as a `TZ` environment variable or
+only as a bind-mounted `/etc/localtime` (the more common case — this is why
+`date` inside the container is already correct even when the browser isn't).
+The app then exports `TZ` itself, because that is the one signal Chromium's
+bundled ICU reliably honors; `/etc/localtime` alone is not enough for it, even
+though it's enough for every other program in the container. With either
+kiosk-user profile setting the clock should now match Settings, System,
+General, Time zone.
 
 If the clock still shows UTC, set the kiosk user's profile to "Use server
 time zone": it makes the browser irrelevant and is the right choice for a
 display that sits in the same house the server is configured for. Then check
-the app log for the "Time zone from Home Assistant" line; a warning there
-means the zone name had no matching zoneinfo file, which is worth reporting.
+the app log for the "Time zone resolved as ..." line; a warning there means
+no usable zone could be found (no `TZ`, no `/etc/timezone`, and no valid
+`/etc/localtime` symlink), which is worth reporting.
 
 ## Boot and reboot behavior
 
