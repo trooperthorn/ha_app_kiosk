@@ -165,6 +165,16 @@ if [ "$(read_option 'ignore_certificate_errors' 'false')" = "true" ]; then
     bashio::log.warning "Legacy certificate bypass is ignored. To trust a self-signed server, enable allow_self_signed and supply its public PEM certificate."
 fi
 
+# Report runtime addresses for the exact-host trusted-user mapping.
+# No Supervisor API privilege or control API token is needed.
+if network_info=$(python3 /app/network_info.py); then
+    while IFS= read -r line; do
+        bashio::log.info "$line"
+    done <<< "$network_info"
+else
+    bashio::log.warning "Could not report the app IP address; startup will continue."
+fi
+
 # Policies apply even when navigation lockdown is off. A write failure
 # stops startup rather than launching an unrestricted browser.
 python3 /app/browser_policy.py "$URL"
@@ -308,7 +318,7 @@ fi
 # Credential entry is performed by the API's origin-checked CDP task.
 # No username/password is passed to a process argument or keyboard focus.
 if [ "$AUTH_METHOD" = "trusted_networks" ]; then
-    bashio::log.warning "Bridge networking no longer uses Core's loopback trusted-network rule. Prefer a persistent non-admin login; update Core's trusted-user mapping only for this app's actual address."
+    bashio::log.warning "Bridge networking no longer uses Core's loopback trusted-network rule. Prefer a persistent non-admin login; use the logged Trusted-network CIDR for this app's direct connection and map only the kiosk user."
 fi
 
 # Chromium runtime. Launch flags are explained in docs/operations.md; the

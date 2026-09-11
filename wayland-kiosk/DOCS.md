@@ -207,6 +207,39 @@ mode remains optional and checks the exact HA origin and login form before
 submission; it never types credentials into global keyboard focus. It fails
 closed when the expected form is unavailable.
 
+### Finding the kiosk address for trusted-user login
+
+After starting the app, open its **Log** tab and find `App internal IP address(es)`
+and `Trusted-network CIDR (direct HA route)`. The latter is the local source
+address selected for the configured Home Assistant endpoint, formatted as an
+exact IPv4 `/32` or IPv6 `/128` entry. It is not the HA host LAN IP or CDP loopback.
+No control API token or Supervisor API permission is required to report it.
+
+Use the printed CIDR in both `trusted_networks` and `trusted_users`. Replace
+`KIOSK_CIDR_FROM_LOG` and `KIOSK_USER_ID` below; merge into your existing
+`homeassistant:` section rather than creating a duplicate:
+
+```yaml
+homeassistant:
+  auth_providers:
+    - type: trusted_networks
+      trusted_networks:
+        - "KIOSK_CIDR_FROM_LOG"
+      trusted_users:
+        "KIOSK_CIDR_FROM_LOG":
+          - "KIOSK_USER_ID"
+      allow_bypass_login: true
+    - type: homeassistant
+```
+
+Use the dedicated non-admin user's **ID**, not username. Keep the Home Assistant
+provider as a fallback, and restart Core after editing its authentication config.
+Recheck the app log after reinstall/network changes; addresses are discovered,
+not reserved by this app. A proxy, NAT, or different browser route can change the
+source Core sees, so use the direct `http://homeassistant:8123` route when applicable.
+The trusted address must not overlap `http.trusted_proxies`; do not trust the
+whole Supervisor subnet. See [Home Assistant authentication documentation](https://www.home-assistant.io/docs/authentication/providers/#trusted-networks).
+
 ## Time and time zone
 
 The dashboard clock follows the Home Assistant user the kiosk is logged in
