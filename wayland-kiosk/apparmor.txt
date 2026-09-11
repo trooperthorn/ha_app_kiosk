@@ -1,3 +1,7 @@
+# Target the policy ABI supported by HAOS AppArmor 3.x and newer parsers.
+# ABI 3.0 permits user namespaces implicitly; the userns rule requires 4.x.
+abi <abi/3.0>,
+
 #include <tunables/global>
 
 # No blanket file/execute rule: root setup is confined separately from Chromium.
@@ -72,7 +76,6 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     ptrace (read,trace),
     # Chromium creates its own user/PID/network namespaces and seccomp sandbox.
     # These profile permissions do not grant host capabilities to its uid.
-    userns,
     capability sys_admin,
     capability sys_chroot,
     capability setuid,
