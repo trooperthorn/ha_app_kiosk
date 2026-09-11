@@ -1,4 +1,13 @@
 # Changelog
+
+## Unreleased
+
+- Add a Time zone setting defaulting to America/Chicago for Central Time
+  with automatic daylight saving changes, even if inherited TZ is UTC.
+- Resolve regular localtime files and skip invalid inherited zone names;
+  avoid replacing host-mounted timezone files during startup.
+- Log Chromium's actual timezone and local time after browser startup.
+
 ## KNOWN ISSUES
 - Install slower to add chrome, 1-5 minutes. I can't fix that.
 

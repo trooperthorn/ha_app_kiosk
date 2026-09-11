@@ -55,6 +55,10 @@
     "api_token": {
       "name": "Kiosk Control API Token",
       "description": "Optional app-local bearer token protecting the control API on 127.0.0.1:8034. This is not a Home Assistant long-lived access token."
+    },
+    "time_zone": {
+      "name": "Time zone",
+      "description": "IANA time zone for the kiosk browser. Defaults to America/Chicago (US Central with automatic daylight saving time). Leave empty to inherit the system time zone. Restart the app after changing."
     }
   }
 }

@@ -85,6 +85,7 @@ RUN apk add --no-cache --virtual .cage-build-deps \
 COPY run.sh /run.sh
 COPY launch-browser.sh /app/launch-browser.sh
 COPY rest_server.py /app/rest_server.py
+COPY resolve_timezone.py /app/resolve_timezone.py
 
 # Set execution permissions
 RUN chmod a+x /run.sh /app/launch-browser.sh

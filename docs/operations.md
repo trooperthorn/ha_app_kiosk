@@ -146,19 +146,23 @@ see the frontend's `resolve-time-zone.ts`), and only `server` uses Home
 Assistant's zone directly. The user-facing guidance is in
 `wayland-kiosk/DOCS.md`.
 
-Resolved (was "Unverified" above): a field report confirmed the browser
-reporting UTC while the container's own clock (`date`) was already correct.
-Root cause was PR #29's original implementation: it wrote `TZ` to
-`/etc/localtime` and `/etc/timezone` but never exported `TZ` itself into the
-environment, on the assumption that Chromium's ICU would pick up one of the
-files. Testing the actual bundled Chromium confirmed the fix needed is
-simpler and more direct than that assumption: Chromium reliably follows the
-`TZ` environment variable of its own process, so `run.sh` now resolves a
-zone from `TZ` if present, else `/etc/timezone`, else the `/etc/localtime`
-symlink target — covering the common case where Supervisor (or a bind
-mount) only provides `/etc/localtime` and never sets `TZ` at all — and
-`export`s it, so every child process including Chromium inherits it
-directly.
+The app now accepts a `time_zone` override, defaulting to US Central:
+`America/Chicago`. Missing keys in existing options also use this default. It wins over inherited `TZ`. Empty means automatic:
+valid `TZ`, `/etc/timezone`, `/etc/localtime` symlink, then a byte-for-byte
+match of a regular localtime file against installed zone.tab entries.
+Matching timezone rules instead of the current offset preserves DST.
+
+The previous implementation only handled symlinks, not regular bind mounts,
+and attempted to replace `/etc/localtime` before exporting TZ. A failed `ln`
+under Bashio's errexit could abort startup. The resolver now reads timezone
+sources without modifying mounted files. An invalid explicit option fails
+clearly; an unresolvable automatic zone emits a warning.
+
+`report_browser_timezone` reads the renderer's actual Intl zone and Date
+string over CDP after startup and logs them alongside the requested TZ. This
+is observational: it does not override page settings or reload the dashboard.
+A startup export message alone does not prove a dashboard card uses that zone.
+The exact cause on a deployed kiosk still requires its browser diagnostic.
 
 ## `login_delay` truncation
 
