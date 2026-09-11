@@ -57,6 +57,8 @@ jobs:
           sudo aa-status
       - name: Verify browser under enforced AppArmor
         run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_security_smoke.py
+      - name: Verify Cage and production launcher under AppArmor
+        run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/compositor_smoke.py
       - name: AppArmor denial diagnostics
         if: failure()
         run: sudo journalctl -k --since '20 minutes ago' --no-pager | grep -E 'apparmor|DENIED' || true
