@@ -20,8 +20,10 @@ jobs:
         with:
           python-version: "3.14"
       - name: Compile Python
-        run: python -m py_compile wayland-kiosk/rest_server.py wayland-kiosk/resolve_timezone.py
-      - name: Time zone regression tests
+        run: python -m compileall -q wayland-kiosk
+      - name: Install test dependencies
+        run: pip install aiohttp==3.14.3
+      - name: Security and time zone regression tests
         run: python -m unittest discover -s tests -v
       - name: Shell syntax check
         run: |
@@ -46,4 +48,15 @@ jobs:
       - name: Build the app image
         run: docker build --tag local/app-kiosk:${{ github.sha }} wayland-kiosk
       - name: Verify actual Chromium Central Time and DST
-        run: docker run --rm --entrypoint python3 -v "$PWD/tests:/tests:ro" local/app-kiosk:${{ github.sha }} /tests/browser_timezone_smoke.py
+        run: docker run --rm --security-opt seccomp=unconfined --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_timezone_smoke.py
+      - name: Verify browser security and trusted certificates
+        run: docker run --rm --security-opt seccomp=unconfined --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_security_smoke.py
+      - name: Load enforced AppArmor profile
+        run: |
+          sudo apparmor_parser -r wayland-kiosk/apparmor.txt
+          sudo aa-status
+      - name: Verify browser under enforced AppArmor
+        run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_security_smoke.py
+      - name: AppArmor denial diagnostics
+        if: failure()
+        run: sudo journalctl -k --since '20 minutes ago' --no-pager | grep -E 'apparmor|DENIED' || true

@@ -1,5 +1,9 @@
 # Operations
 
+For the current security architecture and migration requirements, start with
+[security.md](security.md) and the app's DOCS.md. The desktop now runs as kiosk,
+CDP is private container loopback, and API callers use the internal app hostname.
+
 ## Device access mechanics
 
 Supervisor grants an app hardware access by resolving every entry in
@@ -164,16 +168,16 @@ is observational: it does not override page settings or reload the dashboard.
 A startup export message alone does not prove a dashboard card uses that zone.
 The exact cause on a deployed kiosk still requires its browser diagnostic.
 
-## `login_delay` truncation
+## Credential login delay
 
-`login_delay` is schema'd as `float(0,)`, so it may arrive as e.g. `"10.5"`.
-Bash's `[ -lt ]` only compares integers, so the credentials auto-login loop
-in `run.sh` truncates it to whole seconds (`"${LOGIN_DELAY%.*}"`, defaulting
-to 10 if that leaves an empty string) before using it as a loop bound.
+The optional verified-origin CDP login task retries for up to login_delay
+seconds (bounded to 120 attempts), then leaves the login screen for manual use.
+No password is passed to wtype or process arguments.
 
 ## REST control API
 
-`rest_server.py` listens on `127.0.0.1:8034` and accepts a single POST
+When enabled with a token, `rest_server.py` listens on the private app network
+at port 8034 (no published host port) and accepts a single POST
 `/api` endpoint with a `command` field selecting one of:
 
 - `display_on` -- turns the output on via `wlr-randr`; an optional

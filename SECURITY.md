@@ -26,11 +26,9 @@ tested rollback/backup.
 
 ## Security boundaries
 
-This app runs as a privileged Home Assistant app with GPU and input device
-passthrough and `host_network: true` (see [docs/security.md](docs/security.md)
-for why). It is not a sandbox: a compromise of the Chromium process or the
-control API within its stated trust boundaries could affect the display and,
-through `host_network`, reach other loopback-bound services on the host. Its
-device permissions are minimized (explicit nodes, no `full_access`) and its
-control API is bound to loopback only, but neither claim is a guarantee
-against a vulnerability in Chromium, Cage, or the Alpine base image itself.
+The app runs in Protection mode with selected GPU/input devices and a custom
+AppArmor profile. Its browser runs as a non-root user with Chromium sandboxing.
+The optional authenticated control API is internal-network only; CDP is private
+container loopback. No host network, full_access, Docker API, or extra host
+capabilities are requested. See [docs/security.md](docs/security.md) for the
+rating calculation, remaining trust boundaries and required hardware checks.

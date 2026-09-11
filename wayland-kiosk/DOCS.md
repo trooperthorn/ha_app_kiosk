@@ -10,6 +10,31 @@
 
 By replacing the aging X11 stack with a direct Wayland compositor (Cage), this add-on provides a robust, tear-free environment for rendering Chromium dashboards on your local hardware.
 
+## Security update: required setup before installing
+
+This release removes host networking and broad input-device grants. Review
+these options before starting: select the touchscreen/pointer devices, check
+the HA URL, and update any control-API automations. Reauthenticate the kiosk if
+the URL origin changed. Keep Protection mode enabled. A full non-root compositor
+and AppArmor hardware check on your HAOS installation is required after update.
+
+| Option | Default | Behavior |
+|---|---|---|
+| `allow_http` | true | Supports ordinary local HTTP. Disable to require HTTPS navigation. |
+| `allow_self_signed` | false | Trust only the certificate supplied below; never globally bypass TLS validation. |
+| `self_signed_certificate` | empty | One public PEM server/CA certificate. Hostname and expiry checks still apply. |
+| `audio_enabled` | true | Disable to mute playback and remove the browser's PulseAudio connection. Restart required. |
+| `control_api_enabled` | false | Enable only with a 32+ character API token and updated internal-network automation URL. |
+| `gpu_devices` | card0, renderD128 | Explicit GPU/device selection. |
+| `input_devices` | empty | Select this display's touch and pointer devices. |
+
+HTTP needs no certificate. For self-signed HTTPS, copy the server's public PEM
+certificate (or your private CA's public certificate) into the option, enable
+trust, save and restart. Use the server name listed in the certificate. Never
+paste a private key. Disabling trust removes the imported certificate on restart.
+Audio uses the Supervisor audio mount so it can be enabled; the toggle controls
+browser playback/connection, not Supervisor's static mount permission.
+
 ## Configuration Options
 
 Honesty note: not every option in the configuration screen is applied yet.
@@ -19,15 +44,15 @@ option works because it appears in the UI.
 
 | Option | Status | Effect |
 |---|---|---|
-| `ha_url` | applied | URL the kiosk loads. Default `http://127.0.0.1:8123` (requires `host_network`). |
+| `ha_url` | applied | URL the kiosk loads. Default `http://homeassistant:8123` on the private app network. |
 | `ha_dashboard` | applied | Appended to `ha_url` as a path. Default `lovelace`, which is Home Assistant's Overview dashboard. |
 | `rotate_display` | applied | Output transform via `wlr-randr`: `normal`, `right` (270), `inverted` (180), `left` (90). Rotation is applied before Chromium launches. Unassigned touch devices are mapped to the discovered output by the bundled Cage patch. |
 | `screen_timeout` | applied | Seconds of idle before the output powers off via swayidle. `0` disables blanking (default). Fallback also `0`. |
-| `auth_method` | applied | `trusted_networks` (default, needs Core-side configuration, see below), `credentials` (types the login form once via wtype), or `none`. |
+| `auth_method` | applied | `none` (default, persistent manual login), `credentials` (verified-origin form submission), or `trusted_networks` (requires matching Core settings). |
 | `ha_username` / `ha_password` | applied | Only used when `auth_method: credentials`. |
 | `login_delay` | applied | Seconds to wait for the login page before giving up on auto-login. |
-| `ignore_certificate_errors` | applied | Passes `--ignore-certificate-errors` to Chromium for self-signed HTTPS. |
-| `api_token` | applied | Optional app-local bearer token for the kiosk control API on `127.0.0.1:8034`. This is **not** a Home Assistant long-lived access token. |
+| `ignore_certificate_errors` | retired | Ignored legacy option; use explicit certificate trust below. |
+| `api_token` | applied | Required when the control API is enabled; minimum 32 characters. |
 | `browser_refresh` | applied | Periodic page refresh interval in seconds. `0` disables periodic refresh. |
 | `lock_navigation` | applied | `false` by default. When `true`, a Chromium managed policy blocks every URL except the scheme, host and port of `ha_url`, and new windows are refused outright. See "Locking the kiosk to the dashboard" below. |
 | `return_to_dashboard` | applied | Seconds between checks that the page is still on the dashboard; if it is not, the browser is navigated back to `ha_url` + `ha_dashboard`. `0` (default) disables the check. |
@@ -167,45 +192,20 @@ point for a dashboard with camera or map cards, which are the usual cause.
 climbs while `unresponsive_reloads` stays at zero, the panel is losing Home
 Assistant, not running out of memory.
 
-## Login: trusted_networks that actually bypasses
+## Login on the private app network
 
-For `auth_method: trusted_networks`, Home Assistant Core needs an
-`auth_providers` block in its own `configuration.yaml`. **Provider order
-matters**: the login flow works through the list in order, so
-`trusted_networks` must come FIRST or the kiosk is handed the password
-form as the default and never auto-logs-in. Password login everywhere
-else keeps working because the `homeassistant` provider stays in the
-list as the second entry.
+The default `ha_url` is `http://homeassistant:8123` and `auth_method` is `none`.
+Log into the physical kiosk once as a dedicated non-admin HA user; its browser
+profile persists. Legacy HTTP loopback URLs are translated to the internal
+Home Assistant hostname. HTTPS loopback URLs must be replaced with the hostname
+on the certificate. The origin change can require a fresh browser login.
 
-```yaml
-homeassistant:
-  auth_providers:
-    - type: trusted_networks
-      trusted_networks:
-        - 127.0.0.1/32
-        - ::1/128
-      trusted_users:
-        127.0.0.1:
-          - YOUR_USER_ID_FROM_SETTINGS_PEOPLE_URL
-        ::1:
-          - YOUR_USER_ID_FROM_SETTINGS_PEOPLE_URL
-      allow_bypass_login: true
-    - type: homeassistant
-```
-
-`allow_bypass_login: true` skips the login screen entirely when exactly
-one user is eligible for the connecting IP; `trusted_users` pins which
-user that is. After editing, a full Core restart is required
-(`auth_providers` is not hot-reloadable), then restart this add-on.
-Alternative with no Core changes: log in manually once on the kiosk; the
-persistent Chromium profile keeps the session across restarts and
-reboots.
-
-Do not list `127.0.0.1` or `::1` as an HTTP `trusted_proxy` for this
-configuration. Home Assistant excludes trusted-proxy addresses from the
-trusted-networks authentication provider. If the Network settings UI
-requires at least one proxy entry even though `use_x_forwarded_for` is off,
-use an unused documentation address such as `192.0.2.1/32` instead.
+Old Core trusted-network rules for 127.0.0.1 no longer apply. If retaining
+`trusted_networks`, configure only this app's verified address and a single
+non-admin trusted user. Do not trust the entire Supervisor subnet. Credential
+mode remains optional and checks the exact HA origin and login form before
+submission; it never types credentials into global keyboard focus. It fails
+closed when the expected form is unavailable.
 
 ## Time and time zone
 
@@ -309,31 +309,15 @@ tests `/dev/dri/renderD128` with `vainfo`. A healthy AMD host logs
 name. A probe failure is non-fatal, but means video decoding will use CPU
 until the DRM permissions or driver are corrected.
 
-## Device access: how it works and how it broke
+## Selected device access
 
-Supervisor grants an add-on hardware access by resolving every entry in
-config.yaml's `devices:` list against its udev hardware database and
-writing a cgroup v2 device rule for each match (`docker/app.py`
-`cgroups_rules` in the Supervisor source). Two things follow from that:
-
-1. **Entries must be individual device nodes** (`/dev/dri/card0`,
-   `/dev/input/event3`, ...). A directory (`/dev/dri`) or the legacy
-   Docker triplet form (`/dev/dri:/dev/dri:rwm`) matches nothing in the
-   hardware database and is **silently skipped** -- the add-on installs
-   and starts normally but holds zero device grants. The device nodes are
-   still *visible* in `/dev` inside the container, but every `open()`
-   fails with `EPERM` ("Operation not permitted"), which surfaces as
-   wlroots' `Failed to open device: '/dev/dri/card0'` -> `Found 0 GPUs`
-   -> Cage exits. This exact bug shipped in every version before
-   2026.08.20.3.
-2. Nodes listed in config.yaml that don't exist on a given host are
-   skipped harmlessly, so the config deliberately over-lists
-   (`card0`/`card1`, `event0`-`event25`) to cover different hardware --
-   the same approach the proven HAOS-kiosk X11 add-on uses.
-
-Do NOT set `apparmor: false`: it was once tried against this same crash,
-does not affect device cgroup grants, and only strips the add-on's
-security confinement.
+Select `gpu_devices` (normally card0 and renderD128) and `input_devices`
+(the touchscreen's touch and pointer event nodes) in Configuration. The input
+list defaults empty rather than granting every keyboard/input event. Use
+Settings > System > Hardware to identify devices; stable by-id paths are
+preferred where available. Save and restart after selection, then verify touch,
+rotation and camera decoding. Supervisor derives access from these device
+options. No full_access, extra host capability, raw USB or host D-Bus is needed.
 
 ## Touchscreen mapping and rotation
 
@@ -362,39 +346,19 @@ If the file is missing or invalid, the add-on logs a warning and uses the
 documented defaults. Supervisor API/token health no longer affects option
 loading.
 
-## REST API Server
+## REST control API
 
-This add-on spins up a background API server allowing you to control the screen state dynamically from Home Assistant automations:
-* `display_on`: Wakes up the monitor.
-* `display_off`: Powers down the monitor output via `wlr-randr`.
-* `refresh_browser`: Triggers an active reload of the Chromium dashboard.
-* `launch_url`: Uses the Chrome DevTools Protocol to seamlessly navigate to a new page.
-* `screenshot`: Returns a base64-encoded PNG of whatever is currently on screen.
+Enable `control_api_enabled` and set a random `api_token` of at least 32
+non-whitespace characters to use automations. The default is disabled; the
+watchdog and screen timeout still operate. No port is published on the host.
+Core uses `http://<app-hostname>:8034/api`, where the hostname is the installed
+app slug with underscores replaced by hyphens. Read the actual slug from the
+app information; do not assume a repository hash.
 
-The `api_token` option is a shared secret belonging only to this kiosk app.
-Do not paste a Home Assistant long-lived access token into it. When the option
-is set, every control request must contain:
-
-```text
-Authorization: Bearer <your kiosk control API token>
-```
-
-Because the API listens only on loopback, it cannot be reached directly from
-the LAN. With `host_network: true`, Home Assistant Core and other host-local
-processes can reach it.
-
-### Monitoring endpoint
-
-`GET http://<host>:8034/api/health` (no token required) reports app uptime,
-whether the monitor is currently on, whether the dashboard is paused for
-power saving, and whether Chromium is responding, as plain JSON. Point an
-uptime check or a Home Assistant `rest` sensor at it without handling the
-control API's token.
-
-### Power saving while the screen is off
-
-Whenever the monitor goes dark, however that happened -- the configured
-`screen_timeout`, a `display_off` call, or a `timeout` set through
-`display_on` -- the app also pauses the Chromium page's rendering and
-timers until the screen comes back on. This is transparent: the dashboard
-resumes live the moment the display wakes.
+Requests must be server-side POSTs with `Content-Type: application/json` and
+`Authorization: Bearer <api_token>`. Browser Origin headers are rejected.
+Commands retain their existing names (display_on, display_off, refresh_browser,
+launch_url, wlr_randr, is_display_on, screenshot). Update automations previously
+using 127.0.0.1:8034. A token authenticates this app API only, not HA itself.
+`GET /api/health` returns status on the internal app network when the API is on.
+Chromium debugging remains on private container loopback and is not published.

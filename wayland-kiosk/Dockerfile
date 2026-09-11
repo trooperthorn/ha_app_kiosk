@@ -2,7 +2,7 @@
 # build below requires wlroots0.20-dev, which only exists in Alpine edge's
 # package index, not in any pinned stable branch (verified against
 # pkgs.alpinelinux.org). See docs/decisions.md.
-ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
+ARG BUILD_FROM=ghcr.io/home-assistant/base:latest@sha256:93ef607824e3f27e868f11b10938283a98bf880ed57bcf8eaa81c6c2d521f6f5
 FROM ${BUILD_FROM}
 
 ARG BUILD_VERSION
@@ -43,13 +43,19 @@ RUN apk add --no-cache \
     xwayland \
     curl \
     tzdata \
+    nss-tools \
+    openssl \
     python3 \
     py3-pip
 
 # aiohttp via pip, not the py3-aiohttp apk package: Alpine's packaged version
 # lags behind aiohttp's own fixed releases (see docs/security.md). py3-pip
 # is already installed above.
-RUN pip install --no-cache-dir --break-system-packages aiohttp
+RUN pip install --no-cache-dir --break-system-packages aiohttp==3.14.3
+
+# The base image includes tempio, unused by this app and its init scripts.
+# Removing it removes its vulnerable embedded Go dependencies instead of hiding findings.
+RUN rm -f /usr/bin/tempio
 
 # Build a pinned Cage with a touch-to-output mapping patch; see docs/design.md.
 # The upstream Alpine cage package stays installed so it owns runtime deps.
@@ -81,11 +87,15 @@ RUN apk add --no-cache --virtual .cage-build-deps \
     && apk del .cage-build-deps \
     && rm -rf /tmp/cage-src /tmp/cage.tar.gz /tmp/cage-map-unassigned-input.patch
 
+# A dedicated desktop user; privileged setup and options remain root-owned.
+RUN addgroup -g 1000 kiosk && adduser -D -u 1000 -G kiosk -h /data/browser-home kiosk
+
 # Copy the execution script and API server into the container
 COPY run.sh /run.sh
 COPY launch-browser.sh /app/launch-browser.sh
 COPY rest_server.py /app/rest_server.py
 COPY resolve_timezone.py /app/resolve_timezone.py
+COPY security_config.py prepare_runtime.py browser_policy.py credential_login.py /app/
 
 # Set execution permissions
 RUN chmod a+x /run.sh /app/launch-browser.sh

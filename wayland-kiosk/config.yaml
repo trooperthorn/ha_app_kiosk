@@ -1,14 +1,16 @@
 name: "HAOS Wayland Kiosk"
 description: "Wayland-native kiosk dashboard using Cage and Chromium"
-version: "2026.09.11.1"
+version: "2026.09.11.2"
+breaking_versions:
+  - "2026.09.11.2"
 slug: "app_kiosk"
 init: false
 startup: application
 url: "https://github.com/trooperthorn/ha_app_kiosk/"
 
-# host_network is required for ha_url: http://127.0.0.1:8123 to reach the
-# real Core instance; see docs/security.md.
-host_network: true
+# Core and automations communicate over the Supervisor bridge network.
+host_network: false
+apparmor: true
 
 arch:
   - aarch64
@@ -19,43 +21,8 @@ arch:
 # docs/operations.md.
 udev: true
 audio: true
-devices:
-  - /dev/dri/card0
-  - /dev/dri/card1
-  - /dev/dri/renderD128
-  - /dev/dri/renderD129
-  - /dev/input/event0
-  - /dev/input/event1
-  - /dev/input/event2
-  - /dev/input/event3
-  - /dev/input/event4
-  - /dev/input/event5
-  - /dev/input/event6
-  - /dev/input/event7
-  - /dev/input/event8
-  - /dev/input/event9
-  - /dev/input/event10
-  - /dev/input/event11
-  - /dev/input/event12
-  - /dev/input/event13
-  - /dev/input/event14
-  - /dev/input/event15
-  - /dev/input/event16
-  - /dev/input/event17
-  - /dev/input/event18
-  - /dev/input/event19
-  - /dev/input/event20
-  - /dev/input/event21
-  - /dev/input/event22
-  - /dev/input/event23
-  - /dev/input/event24
-  - /dev/input/event25
-
-# Do NOT set apparmor: false; see docs/decisions.md.
-
-map:
-  - addon_config:rw
-  - media:rw
+# Device access comes only from the selected device options below.
+# /data is provided by Supervisor; no shared writable mounts are needed.
 
 ulimits:
   nofile:
@@ -63,10 +30,19 @@ ulimits:
     hard: 65536
 
 options:
-  ha_url: "http://127.0.0.1:8123"
+  ha_url: "http://homeassistant:8123"
+  allow_http: true
+  allow_self_signed: false
+  self_signed_certificate: ""
+  audio_enabled: true
+  control_api_enabled: false
+  gpu_devices:
+    - /dev/dri/card0
+    - /dev/dri/renderD128
+  input_devices: []
   ha_dashboard: "lovelace"
   browser_refresh: 12000
-  lock_navigation: false
+  lock_navigation: true
   return_to_dashboard: 0
   ha_sidebar: "none"
   ha_theme: ""
@@ -75,8 +51,7 @@ options:
   screen_timeout: 0
   rotate_display: "right"
   login_delay: 10
-  ignore_certificate_errors: true
-  auth_method: "trusted_networks"
+  auth_method: "none"
   ha_username: ""
   ha_password: ""
   # App-local shared secret for the control API; not a HA long-lived
@@ -85,6 +60,15 @@ options:
 
 schema:
   ha_url: url
+  allow_http: bool
+  allow_self_signed: bool
+  self_signed_certificate: str?
+  audio_enabled: bool
+  control_api_enabled: bool
+  gpu_devices:
+    - device(subsystem=drm)
+  input_devices:
+    - device(subsystem=input)
   ha_dashboard: str?
   browser_refresh: int(0,)
   lock_navigation: bool
@@ -95,7 +79,7 @@ schema:
   dark_mode: bool
   screen_timeout: int(0,)
   rotate_display: list(normal|left|right|inverted)
-  ignore_certificate_errors: bool
+  ignore_certificate_errors: bool?
   login_delay: float(0,)
   auth_method: list(trusted_networks|credentials|none)
   ha_username: str?
