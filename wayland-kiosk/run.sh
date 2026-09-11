@@ -9,7 +9,9 @@ bashio::log.info "================ SYSTEM DIAGNOSTICS ================"
 # 1. Check GPU / DRM devices
 if [ -d "/dev/dri" ]; then
     bashio::log.info "DRM Device Nodes Found:"
-    ls -la /dev/dri
+    if ! ls -la /dev/dri; then
+        bashio::log.warning "Could not list DRM devices; continuing startup. Check device access if the compositor fails."
+    fi
 else
     bashio::log.warning "NO /dev/dri DIRECTORY FOUND! GPU passthrough is missing."
 fi
@@ -48,7 +50,9 @@ fi
 # 3. Check Input devices
 if [ -d "/dev/input" ]; then
     bashio::log.info "Input Devices Found:"
-    ls -la /dev/input
+    if ! ls -la /dev/input; then
+        bashio::log.warning "Could not list input devices; continuing startup. Check the selected touchscreen devices."
+    fi
 fi
 
 bashio::log.info "===================================================="
