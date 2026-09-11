@@ -74,12 +74,18 @@ jobs:
           sed 's/^profile app_kiosk /profile b2ecadf4_app_kiosk /' wayland-kiosk/apparmor.txt > /tmp/kiosk-apparmor.txt
           sudo apparmor_parser -r /tmp/kiosk-apparmor.txt
           sudo aa-status
+      - name: Verify device-directory discovery under AppArmor
+        run: |
+          mkdir -p "$RUNNER_TEMP/kiosk-devices/dri" "$RUNNER_TEMP/kiosk-devices/input/by-id" "$RUNNER_TEMP/kiosk-devices/input/by-path"
+          docker run --rm --security-opt apparmor=b2ecadf4_app_kiosk --entrypoint /bin/sh -v "$RUNNER_TEMP/kiosk-devices/dri:/dev/dri:ro" -v "$RUNNER_TEMP/kiosk-devices/input:/dev/input:ro" local/app-kiosk:${{ github.sha }} -c 'ls -la /dev/dri && ls -la /dev/input && ls -la /dev/input/by-id'
+      - name: Verify diagnostic listing failures are nonfatal
+        run: docker run --rm --security-opt apparmor=b2ecadf4_app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" -v "$RUNNER_TEMP/kiosk-devices/dri:/dev/dri:ro" -v "$RUNNER_TEMP/kiosk-devices/input:/dev/input:ro" local/app-kiosk:${{ github.sha }} /app/tests/diagnostics_smoke.py
       - name: Verify real init and root setup under AppArmor
         run: |
           mkdir -p "$RUNNER_TEMP/kiosk-data"
           printf '%s' '{"ha_url":"http://192.0.2.1:8123","input_devices":[]}' > "$RUNNER_TEMP/kiosk-data/options.json"
           trap 'docker logs kiosk-init; docker rm -f kiosk-init >/dev/null' EXIT
-          docker run -d --name kiosk-init --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk -v "$RUNNER_TEMP/kiosk-data:/data" local/app-kiosk:${{ github.sha }}
+          docker run -d --name kiosk-init --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk -v "$RUNNER_TEMP/kiosk-data:/data" -v "$RUNNER_TEMP/kiosk-devices/dri:/dev/dri:ro" -v "$RUNNER_TEMP/kiosk-devices/input:/dev/input:ro" local/app-kiosk:${{ github.sha }}
           for attempt in $(seq 1 20); do
             if docker logs kiosk-init 2>&1 | grep -q "Rotation config"; then exit 0; fi
             test "$(docker inspect -f '{{.State.Running}}' kiosk-init)" = true

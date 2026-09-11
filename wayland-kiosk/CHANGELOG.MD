@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026.09.11.4 - Device discovery startup fix
+
+- Permit reading DRM/input directory listings under AppArmor, including DRM
+  enumeration by Chromium. Selected device-node access stays unchanged.
+- Make diagnostic DRM/input listings nonfatal when access is unavailable.
+- Exercise startup with device-directory fixtures under enforced AppArmor;
+  headless CI previously skipped these branches because the directories were absent.
+
 ## 2026.09.11.3 - HAOS AppArmor installation compatibility
 
 - Target AppArmor policy ABI 3.0 and remove the unsupported 4.x userns rule
