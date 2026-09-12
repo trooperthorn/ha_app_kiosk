@@ -355,134 +355,102 @@ async def report_browser_timezone():
     logging.warning("Could not verify Chromium time zone at startup.")
 
 
-# CHROME WATCHDOG
-async def chromium_watchdog():
-    """Recover a persistently frozen page without killing a busy renderer.
+# Require a rendered surface and animation progress, not merely a live JS VM.
+# Walk open shadow roots because Home Assistant renders its UI inside them.
+DISPLAY_PROBE = r"""new Promise(resolve => {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    let content = false;
+    function scan(root) {
+      for (const el of root.children || []) {
+        if (['HEAD','SCRIPT','STYLE','TEMPLATE','NOSCRIPT'].includes(el.tagName)) continue;
+        const style = getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' ||
+            Number(style.opacity) === 0) continue;
+        const r = el.getBoundingClientRect();
+        const visible = r.width > 0 && r.height > 0 && r.bottom > 0 &&
+          r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+        const text = [...el.childNodes].some(n =>
+          n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+        if (visible && (text || ['CANVAS','VIDEO','IMG','SVG','INPUT','BUTTON'].includes(el.tagName)))
+          content = true;
+        if (el.shadowRoot) scan(el.shadowRoot);
+        scan(el);
+      }
+    }
+    if (document.body) scan(document.documentElement);
+    resolve({uri: document.documentURI, visible: content,
+      ready: document.readyState !== 'loading'});
+  }));
+})"""
 
-    Two different failures land here and they look nothing alike. An
-    unresponsive renderer fails the probe outright. A Chromium error page --
-    what the kiosk shows when Core was restarting at load time -- has a
-    perfectly healthy renderer that answers the probe immediately, so it is
-    caught by reading the document URI the probe returns rather than by any
-    liveness signal. See docs/operations.md.
+
+async def display_health_probe(timeout):
+    result = await cdp_page_command(
+        "Runtime.evaluate",
+        {"expression": DISPLAY_PROBE, "returnByValue": True, "awaitPromise": True},
+        timeout=timeout, log_failure=False,
+    )
+    value = result.get("result", {}).get("result", {}).get("value")
+    RUNTIME_STATE["on_error_page"] = bool(
+        isinstance(value, dict) and isinstance(value.get("uri"), str)
+        and value["uri"].startswith(ERROR_PAGE_PREFIX))
+    healthy = (result.get("success") and isinstance(value, dict)
+               and value.get("visible") is True and value.get("ready") is True
+               and isinstance(value.get("uri"), str)
+               and not value["uri"].startswith(ERROR_PAGE_PREFIX))
+    return bool(healthy)
+
+
+async def chromium_watchdog():
+    """Restart on a recorded crash or persistent rendering failure.
+
+    Intentional display-off remains exempt. DOM and animation checks cannot
+    prove that a physical monitor is receiving pixels.
     """
     failures = 0
-    reloaded_this_episode = False
-    error_page_cycles = 0
-    await asyncio.sleep(20)  # give Chromium time to finish its initial boot
-
+    await asyncio.sleep(20)
     while True:
-        # A frozen page (see display_freeze_watcher) fails a renderer check by
-        # design -- its timers are paused -- so skip the check entirely rather
-        # than let this false-positive drive a restart.
+        if RUNTIME_STATE["renderer_crashes"]:
+            logging.error("Watchdog: recorded Chromium crash; restarting kiosk.")
+            await execute_command(["killall", "cage"], log_prefix="watchdog",
+                                  allow_command=True)
+            return
         if RUNTIME_STATE["display_frozen"]:
             await asyncio.sleep(WATCHDOG_INTERVAL)
             continue
 
-        # document.documentURI costs exactly what evaluating "1" costs and
-        # additionally reveals an error page.
-        result = await cdp_page_command(
-            "Runtime.evaluate",
-            {"expression": "document.documentURI", "returnByValue": True},
-            timeout=WATCHDOG_RENDERER_TIMEOUT,
-            log_failure=False,
-        )
-
-        if result["success"]:
+        healthy = await display_health_probe(WATCHDOG_RENDERER_TIMEOUT)
+        RUNTIME_STATE["chromium_responsive"] = healthy
+        if healthy:
             if failures:
-                logging.info("Watchdog: Chromium renderer recovered.")
+                logging.info("Watchdog: visible page content and animation checks recovered.")
             failures = 0
-            reloaded_this_episode = False
-            RUNTIME_STATE["chromium_responsive"] = True
-
-            document_uri = result["result"].get("result", {}).get("value")
-            on_error_page = isinstance(document_uri, str) and document_uri.startswith(
-                ERROR_PAGE_PREFIX
-            )
-            RUNTIME_STATE["on_error_page"] = on_error_page
-            if on_error_page:
-                # Home Assistant is usually just restarting, so retry every
-                # cycle and keep the log to one line per ERROR_PAGE_LOG_EVERY.
-                if error_page_cycles % ERROR_PAGE_LOG_EVERY == 0:
-                    logging.warning(
-                        "Watchdog: the kiosk is showing a browser error page "
-                        "(Home Assistant unreachable when the page loaded); "
-                        "reloading. Retrying every %ds until it comes back.",
-                        WATCHDOG_INTERVAL,
-                    )
-                error_page_cycles += 1
-                RUNTIME_STATE["error_page_reloads"] += 1
-                await cdp_page_command(
-                    "Page.reload", {"ignoreCache": True}, log_failure=False
-                )
-            elif error_page_cycles:
-                logging.info(
-                    "Watchdog: the kiosk is back on a real page after %d reload(s).",
-                    error_page_cycles,
-                )
-                error_page_cycles = 0
         else:
             failures += 1
             used, limit = container_memory()
             rss, procs = chromium_rss()
-            logging.warning('Renderer failure diagnostics: container=%s limit=%s; '
-                            'summed RSS=%s processes=%d; memory.events=%s; last_crash=%s',
-                            _mib(used), _mib(limit), _mib(rss), procs,
-                            memory_events(), RUNTIME_STATE['last_crash'])
-            RUNTIME_STATE["chromium_responsive"] = False
             logging.warning(
-                "Watchdog: Chromium renderer unresponsive (%d/%d): %s",
-                failures,
-                WATCHDOG_FAILURE_LIMIT,
-                result.get("error", "unknown CDP failure"),
+                "Display failure diagnostics: container=%s limit=%s; summed RSS=%s "
+                "processes=%d; memory.events=%s; last_crash=%s",
+                _mib(used), _mib(limit), _mib(rss), procs,
+                memory_events(), RUNTIME_STATE["last_crash"],
             )
-
-            # A reload is less disruptive than a full container restart, and
-            # it is what actually recovers a crashed renderer -- so try it on
-            # the first failed probe rather than a minute into the episode.
-            # Once per episode: repeating it every cycle would keep
-            # restarting the load of a merely slow dashboard.
-            if not reloaded_this_episode:
-                reloaded_this_episode = True
-                reload_result = await cdp_page_command(
-                    "Page.reload",
-                    {"ignoreCache": False},
-                    timeout=WATCHDOG_RENDERER_TIMEOUT,
-                    log_failure=False,
-                )
-                if reload_result["success"]:
-                    RUNTIME_STATE["unresponsive_reloads"] += 1
-                    logging.warning(
-                        "Watchdog: requested a page reload before considering restart."
-                    )
-
+            logging.warning("Watchdog: display health failed (%d/%d).",
+                            failures, WATCHDOG_FAILURE_LIMIT)
+            if failures == 1:
+                RUNTIME_STATE["unresponsive_reloads"] += 1
+                await cdp_page_command("Page.reload", {"ignoreCache": False},
+                                       timeout=WATCHDOG_RENDERER_TIMEOUT,
+                                       log_failure=False)
             if failures >= WATCHDOG_FAILURE_LIMIT:
-                # Longer confirmation avoids mistaking a busy renderer for a freeze.
-                final_result = await cdp_page_command(
-                    "Runtime.evaluate",
-                    {"expression": "1", "returnByValue": True},
-                    timeout=WATCHDOG_FINAL_TIMEOUT,
-                    log_failure=False,
-                )
-                if final_result["success"]:
-                    logging.info(
-                        "Watchdog: renderer responded during final confirmation; "
-                        "container restart cancelled."
-                    )
-                    failures = 0
-                else:
-                    logging.error(
-                        "Watchdog: renderer failed final %ds confirmation; "
-                        "forcing container restart.",
-                        WATCHDOG_FINAL_TIMEOUT,
-                    )
-                    await execute_command(
-                        ["killall", "cage"],
-                        log_prefix="watchdog",
-                        allow_command=True,
-                    )
-                    break
-
+                # Never cancel restart just because evaluating '1' succeeds.
+                if not await display_health_probe(WATCHDOG_FINAL_TIMEOUT):
+                    logging.error("Watchdog: display health failed final confirmation; restarting kiosk.")
+                    await execute_command(["killall", "cage"], log_prefix="watchdog",
+                                          allow_command=True)
+                    return
+                failures = 0
+                RUNTIME_STATE["chromium_responsive"] = True
         await asyncio.sleep(WATCHDOG_INTERVAL)
 
 

@@ -226,34 +226,22 @@ watchdog checks `RUNTIME_STATE["display_frozen"]` first and skips its
 check entirely while frozen, rather than treating an intentionally paused
 page as a hang and restarting the container.
 
-## Watchdog: two failure modes that look nothing alike
+## Watchdog display recovery
 
-`chromium_watchdog` recovers two states, and only one of them is a liveness
-problem.
+The internal watchdog runs even when the control API is disabled. A recorded
+Chromium target crash now stops Cage on the next watchdog cycle so the app
+can restart. Keep Home Assistant's Watchdog switch enabled for restart recovery.
 
-An **unresponsive renderer** (a freeze, or the sad-tab left by a renderer
-crash) fails the CDP probe. Verified against Chromium 141: after
-`Page.crash`, `Runtime.evaluate` times out while the target stays listed in
-`/json` with its original URL, and `Page.reload` recovers it. The reload is
-issued on the first failed probe -- a dead wall panel is the symptom users
-report, and a minute of it is a long time -- but only once per episode, so a
-dashboard that is merely slow to load is not restarted every cycle. The
-three-failure escalation to `killall cage` is unchanged behind that.
+For an unresponsive or blank page, the watchdog checks animation progress and
+visible content, including Home Assistant's open shadow roots. It reloads once,
+then stops Cage after three failed checks and a final confirmation using the
+same rendering check. Checks run every 30 seconds, with a 15-second probe timeout
+and a 30-second final timeout. Startup has a 20-second grace period.
+Intentional display-off remains exempt from rendering checks.
 
-A **Chromium error page** is the opposite: the renderer is perfectly healthy
-and answers the probe instantly, so no liveness check will ever see it. This
-is what the kiosk shows when Core was restarting as the page loaded. It is
-detected by what the probe returns rather than whether it returns: the
-watchdog evaluates `document.documentURI`, which costs exactly what
-evaluating `1` cost, and treats a `chrome-error://` prefix as a reload
-trigger. Verified the same way: a navigation to a dead port leaves
-`documentURI` at `chrome-error://chromewebdata/` while `/json` still
-advertises the original URL, which is why the target list cannot be used for
-this and the in-page URI can.
-
-Reloads while the error page persists happen every cycle (Core is usually
-just coming back), and the log line is emitted once per ten cycles so a long
-Core restart does not fill it.
+These checks detect empty pages and stalled animation, but cannot prove physical
+monitor output or distinguish every broken dashboard from legitimate content.
+The watchdog does not expose the debug port or require Supervisor API access.
 
 ## Memory reporting
 
