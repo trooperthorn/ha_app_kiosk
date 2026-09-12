@@ -62,8 +62,8 @@ with open('/tmp/compositor.log', 'w+') as log:
             if not directory.name.isdigit():
                 continue
             try:
-                argv = (directory / 'cmdline').read_bytes().split(b'\0')
-                if argv[0] != b'/usr/lib/chromium/chromium' or any(a.startswith(b'--type=') for a in argv):
+                command_line = (directory / 'cmdline').read_bytes().replace(b'\0', b' ')
+                if not command_line.startswith(b'/usr/lib/chromium/chromium ') or b'--type=' in command_line:
                     continue
                 status = (directory / 'status').read_text()
                 effective = int(next(line.split()[1] for line in status.splitlines()
