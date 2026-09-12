@@ -140,14 +140,18 @@ with open('/tmp/compositor.log', 'w+') as log:
                         if state['renderer_crashes']:
                             break
                         await asyncio.sleep(0.1)
-                    await command('Page.reload')
-                    for _ in range(30):
-                        result = await command('Runtime.evaluate', {'expression': '1', 'returnByValue': True})
-                        if result.get('result', {}).get('value') == 1:
-                            break
-                        await asyncio.sleep(0.2)
-                    else:
-                        raise AssertionError('Renderer did not recover after reload')
+                    # Production opens a fresh CDP connection for each recovery command.
+                    # The connection that issued Page.crash may itself be stranded.
+                    async with session.ws_connect(page['webSocketDebuggerUrl']) as recovery_ws:
+                        ws = recovery_ws
+                        await command('Page.reload')
+                        for _ in range(30):
+                            result = await command('Runtime.evaluate', {'expression': '1', 'returnByValue': True})
+                            if result.get('result', {}).get('value') == 1:
+                                break
+                            await asyncio.sleep(0.2)
+                        else:
+                            raise AssertionError('Renderer did not recover after reload')
                     assert state['renderer_crashes'] == 1, state
                     print('PASS: crash event includes exit status/code and page reload recovers', flush=True)
             monitor.cancel()
@@ -159,6 +163,17 @@ with open('/tmp/compositor.log', 'w+') as log:
             await asyncio.wait_for(exercise(), timeout=180)
         asyncio.run(bounded_exercise())
     finally:
+        for directory in Path('/proc').iterdir():
+            if not directory.name.isdigit():
+                continue
+            try:
+                status = (directory / 'status').read_text()
+                if 'chrom' in status.splitlines()[0]:
+                    fields = [line for line in status.splitlines() if line.split(':')[0] in
+                              ('Name', 'State', 'Pid', 'PPid', 'TracerPid', 'CoreDumping', 'NSpid')]
+                    print('PROCESS:', '; '.join(fields), flush=True)
+            except (OSError, IndexError):
+                pass
         server.shutdown()
         server.server_close()
         process.terminate()
