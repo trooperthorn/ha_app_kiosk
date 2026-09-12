@@ -129,3 +129,10 @@ decode, optional audio, blank/wake, login persistence, API automation routing,
 and watchdog recovery on HAOS. Headless CI cannot prove physical hardware
 operation. Never disable protection or add broad capabilities to hide a denial;
 inspect the denial and adjust the narrow profile if required.
+
+
+Runtime diagnostics release: browser netlink sockets support address/device
+notifications but grant no NET_ADMIN capability. Audio configuration and font
+cache additions are read-only. The desktop D-Bus session is private to the app.
+No SYS_PTRACE, host D-Bus, host networking, extra device passthrough, or sandbox
+disablement is introduced. The expected Supervisor security rating remains 8/8.

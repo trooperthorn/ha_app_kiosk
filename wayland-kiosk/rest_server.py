@@ -8,6 +8,7 @@ import json
 import hmac
 from security_config import load_options, validate_options, validate_url, origin
 from credential_login import credential_login
+from crash_monitor import watch_crashes, memory_events
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
@@ -34,6 +35,8 @@ START_TIME = time.monotonic()
 # Set by display_freeze_watcher, read by chromium_watchdog and health_handler;
 # see docs/operations.md.
 RUNTIME_STATE: Dict[str, Any] = {
+    "renderer_crashes": 0,
+    "last_crash": None,
     "display_on": None,
     "display_frozen": False,
     "chromium_responsive": True,
@@ -235,7 +238,7 @@ async def memory_reporter():
         if used is not None and limit:
             share = f" ({used / limit:.0%} of {_mib(limit)})"
         logging.info(
-            "Memory: container %s%s, Chromium %s across %d process(es), peak %s.",
+            "Memory: container %s%s, Chromium summed RSS %s across %d process(es), sampled RSS peak %s (shared pages counted per process).",
             _mib(used),
             share,
             _mib(rss),
@@ -420,6 +423,12 @@ async def chromium_watchdog():
                 error_page_cycles = 0
         else:
             failures += 1
+            used, limit = container_memory()
+            rss, procs = chromium_rss()
+            logging.warning('Renderer failure diagnostics: container=%s limit=%s; '
+                            'summed RSS=%s processes=%d; memory.events=%s; last_crash=%s',
+                            _mib(used), _mib(limit), _mib(rss), procs,
+                            memory_events(), RUNTIME_STATE['last_crash'])
             RUNTIME_STATE["chromium_responsive"] = False
             logging.warning(
                 "Watchdog: Chromium renderer unresponsive (%d/%d): %s",
@@ -718,6 +727,8 @@ async def health_handler(request):
         "display_frozen": RUNTIME_STATE["display_frozen"],
         "chromium_responsive": RUNTIME_STATE["chromium_responsive"],
         "navigation_locked": NAVIGATION_LOCKED,
+        "renderer_crashes": RUNTIME_STATE["renderer_crashes"],
+        "last_crash": RUNTIME_STATE["last_crash"],
         "on_error_page": RUNTIME_STATE["on_error_page"],
         "error_page_reloads": RUNTIME_STATE["error_page_reloads"],
         "unresponsive_reloads": RUNTIME_STATE["unresponsive_reloads"],
@@ -730,9 +741,11 @@ async def health_handler(request):
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    logging.info("Starting HAOS-Wayland-Kiosk REST API...")
+    logging.info("Starting kiosk watchdog services...")
     asyncio.create_task(credential_login(OPTIONS, cdp_page_command))
     asyncio.create_task(report_browser_timezone())
+    asyncio.create_task(watch_crashes(RUNTIME_STATE))
+    logging.info("Browser crash event monitor initialized (no ptrace capability).")
     asyncio.create_task(chromium_watchdog())
     logging.info("Chromium Watchdog initialized.")
     asyncio.create_task(display_freeze_watcher())

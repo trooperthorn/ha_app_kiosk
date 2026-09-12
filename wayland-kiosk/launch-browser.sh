@@ -22,7 +22,8 @@ chromium_args=(
     --disable-sync
     --disable-background-networking
     --disable-component-update
-    --disable-features=GCM
+    --disable-notifications
+    --disable-push-api-background-mode
     --disable-gpu-shader-disk-cache
     --disable-dev-shm-usage
     --disable-session-crashed-bubble

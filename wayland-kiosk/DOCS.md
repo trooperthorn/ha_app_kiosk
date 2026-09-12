@@ -395,3 +395,33 @@ launch_url, wlr_randr, is_display_on, screenshot). Update automations previously
 using 127.0.0.1:8034. A token authenticates this app API only, not HA itself.
 `GET /api/health` returns status on the internal app network when the API is on.
 Chromium debugging remains on private container loopback and is not published.
+
+
+## Runtime diagnostics
+
+`debug_logging` defaults to false. Startup retains app summaries and compositor
+errors; enable it to include Cage/wlroots device, mode, and graphics extension
+details. The timezone is applied before app diagnostic timestamps are written;
+s6's earlier preinit messages are outside the app's logging control.
+
+The browser uses a private D-Bus session and the Home Assistant audio bridge
+through the ALSA PulseAudio plugin. It does not gain host D-Bus access. Missing
+system-bus/UPower probes and broken-pipe messages during a manual stop can still
+appear; do not disable AppArmor or Chromium's sandbox to suppress them.
+
+Crash monitoring records Chromium target exit status/code, cumulative crashes,
+and cgroup OOM counters. Each failed watchdog probe also samples memory. These
+logs contain no dashboard content, authentication tokens, or target URLs.
+Summed Chromium RSS counts shared pages once per process; compare the container
+figure for total accounting. A recovered renderer resets consecutive watchdog
+failures, but the cumulative crash count remains until the app restarts.
+
+The runtime changes address verified permission and dependency failures. The
+reported physical-device renderer crashes still need an extended run of this
+release to establish whether they are resolved. If they recur, retain the first
+`Chromium target crashed` and `Renderer failure diagnostics` lines. Crashpad's
+ptrace denial alone is not the crash cause; the app does not request SYS_PTRACE.
+
+Chromium may still log Google messaging registration failures despite disabled
+notifications/background mode. These upstream messages remain visible; the app
+does not claim that these switches block all Google traffic.

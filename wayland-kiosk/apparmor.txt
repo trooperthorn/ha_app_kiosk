@@ -28,6 +28,7 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
   /usr/bin/{bash,env,id,jq,date,python3,python3.*,curl,head,grep,sed,cut,ls,cat,chmod,chown,mkdir,seq,sleep,readlink} rix,
   /usr/bin/{seatd,wlr-randr,wtype,swayidle,vainfo,certutil,openssl,killall} rix,
   /usr/local/bin/cage rix,
+  /usr/bin/{dbus-run-session,dbus-daemon} rix,
   /usr/lib/bashio/** rix,
   /usr/bin/bashio rix,
   /run.sh rix,
@@ -74,6 +75,9 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     network inet dgram,
     network inet6 dgram,
     network unix,
+    # Chromium address tracking and udev event monitoring; no NET_ADMIN.
+    network netlink raw,
+    network netlink dgram,
     signal (send,receive),
     ptrace (read,trace),
     # Chromium creates its own user/PID/network namespaces and seccomp sandbox.
@@ -100,6 +104,10 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     owner /proc/*/{oom_score_adj,uid_map,gid_map,setgroups} w,
     owner /proc/*/task/*/comm rw,
     /sys/{,**} r,
+    /etc/asound.conf r,
+    /etc/alsa/{,**} r,
+    /etc/pulse/{,**} r,
+    /var/cache/fontconfig/{,**} r,
     /run/audio/** rw,
     /run/udev/** r,
     # No access to /data/options.json, root credentials, or shared HA storage.

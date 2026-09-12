@@ -1,3 +1,14 @@
+# 2026.09.12.1
+
+- Restore scoped ALSA/PulseAudio configuration access and install the PulseAudio ALSA plugin.
+- Permit browser netlink device/network monitoring without host network or NET_ADMIN.
+- Configure font discovery explicitly and permit read-only system font caches.
+- Start a private desktop D-Bus session; disable browser notifications/push background mode.
+- Add browser crash status/code and OOM-counter diagnostics, including memory at watchdog failures.
+- Apply Central Time before app logs, clarify memory/API/authentication messages, and make detailed compositor logging optional.
+- Exercise sustained canvas/font/audio rendering and intentional crash/reload recovery in CI.
+- Physical kiosk crash resolution requires an extended device run; crash diagnostics no longer depend on ptrace.
+
 # Changelog
 
 ## 2026.09.11.5 - Internal app address logging

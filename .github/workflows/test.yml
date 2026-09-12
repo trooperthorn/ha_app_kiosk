@@ -98,7 +98,7 @@ jobs:
           exit 1
       - name: Verify browser under enforced AppArmor
         run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_security_smoke.py
-      - name: Verify Cage and production launcher under AppArmor
+      - name: Verify sustained rendering, audio and crash recovery under AppArmor
         run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/compositor_smoke.py
       - name: AppArmor denial diagnostics
         if: failure()
