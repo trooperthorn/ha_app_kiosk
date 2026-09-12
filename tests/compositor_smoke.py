@@ -109,7 +109,9 @@ with open('/tmp/compositor.log', 'w+') as log:
                     print('PASS: 60 seconds of canvas/font/audio rendering without target crashes', flush=True)
                     # A deliberate renderer crash must be recorded and a reload must recover.
                     await ws.send_json({'id': 9999, 'method': 'Page.crash'})
-                    for _ in range(50):
+                    # Crashpad may hold the dying process while its denied
+                    # ptrace attempt times out; allow that bounded teardown.
+                    for _ in range(900):
                         if state['renderer_crashes']:
                             break
                         await asyncio.sleep(0.1)

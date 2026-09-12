@@ -109,6 +109,8 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     /etc/alsa/{,**} r,
     /etc/pulse/{,**} r,
     /var/cache/fontconfig/{,**} r,
+    # Fontconfig uses hard-link lock files only within its own cache.
+    owner /data/browser-home/.cache/fontconfig/** l,
     /run/audio/** rw,
     /run/udev/** r,
     # No access to /data/options.json, root credentials, or shared HA storage.
