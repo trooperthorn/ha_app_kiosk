@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026.09.12.2 - Restart after browser crashes and blank pages
+
+- Restart the kiosk after a recorded Chromium target crash, even if JavaScript responds again.
+- Check visible content in open shadow roots and animation progress; reload once and restart after repeated failures using the same final rendering check.
+- Preserve intentional display-off behavior and require Home Assistant Watchdog for app restart recovery.
+- Read the debug logging option locally without requesting Supervisor API access.
+- Add regression coverage for blank pages, hidden content, shadow DOM, and the real watchdog stopping Cage under AppArmor.
+- Software rendering checks cannot verify physical monitor output; extended device validation remains necessary.
+
 ## 2026.09.12.1 - Runtime recovery and diagnostics
 
 - Permit the browser crash handler capability check inside its AppArmor profile without granting the container SYS_PTRACE privilege; retain CDP exit diagnostics and browser sandboxing.

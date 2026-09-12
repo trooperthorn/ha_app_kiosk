@@ -342,7 +342,7 @@ bashio::log.info "Starting Cage with Chromium pointing to: ${URL}"
 
 # A private desktop session bus; never connects to the host system bus.
 cage_args=(-s)
-if [ "$(bashio::config 'debug_logging')" = "true" ]; then
+if [ "$(read_option 'debug_logging' 'false')" = "true" ]; then
     cage_args+=(-D)
 fi
 exec python3 /app/prepare_runtime.py launch /usr/bin/dbus-run-session -- /usr/local/bin/cage "${cage_args[@]}" -- /app/launch-browser.sh

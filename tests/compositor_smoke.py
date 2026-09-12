@@ -102,6 +102,31 @@ with open('/tmp/compositor.log', 'w+') as log:
                         await asyncio.sleep(0.1)
                     else:
                         raise AssertionError('Fixture page did not finish navigation')
+                    # Exercise the actual production probe against live Chromium,
+                    # including HA-like shadow roots and false-positive traps.
+                    import rest_server as runtime
+                    assert await runtime.display_health_probe(5), 'Visible fixture rejected'
+                    for markup in (
+                        '',
+                        '<script>window.fixture = 1</script><style>body { background: black }</style>',
+                        '<div style="display:none">Hidden text</div>',
+                        '<div style="opacity:0"><button>Hidden button</button></div>',
+                    ):
+                        await command('Runtime.evaluate', {'expression':
+                            'document.body.innerHTML = ' + json.dumps(markup)})
+                        assert not await runtime.display_health_probe(5), markup
+                    await command('Runtime.evaluate', {'expression': """
+                        document.body.innerHTML = '<home-assistant></home-assistant>';
+                        document.querySelector('home-assistant').attachShadow({mode:'open'}).
+                            innerHTML = '<div>Dashboard fixture</div>';
+                    """})
+                    assert await runtime.display_health_probe(5), 'Shadow DOM content rejected'
+                    await command('Runtime.evaluate', {'expression':
+                        "document.body.style.display = 'none'"})
+                    assert not await runtime.display_health_probe(5), 'Hidden body accepted'
+                    await command('Runtime.evaluate', {'expression':
+                        "document.body.style.display = ''; document.body.innerHTML = 'Kiosk runtime test'"})
+                    print('PASS: actual watchdog rejects blank/hidden content and accepts shadow DOM', flush=True)
                     # Exercise canvas/font paths, animations, and the ALSA output service.
                     result = await command('Runtime.evaluate', {'expression': """
                         const canvas = document.createElement('canvas');
@@ -154,13 +179,20 @@ with open('/tmp/compositor.log', 'w+') as log:
                             raise AssertionError('Renderer did not recover after reload')
                     assert state['renderer_crashes'] == 1, state
                     print('PASS: crash event includes exit status/code and page reload recovers', flush=True)
+                    # Even a responsive recovered renderer must not suppress the
+                    # requested full restart after a recorded crash. Use the real
+                    # watchdog and signal permissions under production AppArmor.
+                    runtime.RUNTIME_STATE.update(state)
+                    await asyncio.wait_for(runtime.chromium_watchdog(), timeout=30)
+                    await asyncio.to_thread(process.wait, timeout=10)
+                    print('PASS: production watchdog stops Cage after recorded crash', flush=True)
             monitor.cancel()
             try:
                 await monitor
             except asyncio.CancelledError:
                 pass
         async def bounded_exercise():
-            await asyncio.wait_for(exercise(), timeout=180)
+            await asyncio.wait_for(exercise(), timeout=240)
         asyncio.run(bounded_exercise())
     finally:
         for directory in Path('/proc').iterdir():
