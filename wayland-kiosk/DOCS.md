@@ -396,7 +396,6 @@ using 127.0.0.1:8034. A token authenticates this app API only, not HA itself.
 `GET /api/health` returns status on the internal app network when the API is on.
 Chromium debugging remains on private container loopback and is not published.
 
-
 ## Runtime diagnostics
 
 `debug_logging` defaults to false. Startup retains app summaries and compositor

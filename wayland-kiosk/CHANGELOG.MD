@@ -1,6 +1,8 @@
-# 2026.09.12.1
+# Changelog
 
-- Prevent a reproduced >90-second renderer teardown stall by disabling the unusable ptrace-based Crashpad handler; retain CDP exit diagnostics and browser sandboxing.
+## 2026.09.12.1 - Runtime recovery and diagnostics
+
+- Permit the browser crash handler capability check inside its AppArmor profile without granting the container SYS_PTRACE privilege; retain CDP exit diagnostics and browser sandboxing.
 - Restore scoped ALSA/PulseAudio configuration access and install the PulseAudio ALSA plugin.
 - Permit browser netlink device/network monitoring without host network or NET_ADMIN.
 - Configure font discovery explicitly and permit read-only system font caches.
@@ -9,8 +11,6 @@
 - Apply Central Time before app logs, clarify memory/API/authentication messages, and make detailed compositor logging optional.
 - Exercise sustained canvas/font/audio rendering and intentional crash/reload recovery in CI.
 - Physical kiosk crash resolution requires an extended device run; crash diagnostics no longer depend on ptrace.
-
-# Changelog
 
 ## 2026.09.11.5 - Internal app address logging
 
@@ -67,7 +67,7 @@
   independent of any `TZ` variable) is enough for `date` but not reliably
   for Chromium's bundled ICU. The app now resolves a zone name from `TZ`,
   `/etc/timezone`, or the `/etc/localtime` symlink target, and exports it as
-  `TZ` â€” the one signal Chromium does honor â€” for every child process.
+  `TZ` — the one signal Chromium does honor — for every child process.
 - Fix: the kiosk could sit on a Chromium error page indefinitely after Home
   Assistant restarted. The watchdog only tested whether the renderer was
   responsive, and an error page is a healthy renderer, so nothing recovered
