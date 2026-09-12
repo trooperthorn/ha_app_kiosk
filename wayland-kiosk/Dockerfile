@@ -35,6 +35,9 @@ RUN apk add --no-cache \
     libva-utils \
     seatd \
     wayland \
+    dbus \
+    alsa-plugins-pulse \
+    fontconfig \
     font-noto \
     font-noto-emoji \
     wlr-randr \
@@ -79,6 +82,7 @@ RUN apk add --no-cache --virtual .cage-build-deps \
     && mkdir -p /tmp/cage-src \
     && tar -xzf /tmp/cage.tar.gz -C /tmp/cage-src --strip-components=1 \
     && patch -d /tmp/cage-src -p1 < /tmp/cage-map-unassigned-input.patch \
+    && sed -i 's/struct cg_server server = {.log_level = WLR_INFO};/struct cg_server server = {.log_level = WLR_ERROR};/' /tmp/cage-src/cage.c \
     && meson setup /tmp/cage-src/build /tmp/cage-src \
         --prefix=/usr/local \
         --buildtype=release \
@@ -99,7 +103,7 @@ COPY run.sh /run.sh
 COPY launch-browser.sh /app/launch-browser.sh
 COPY rest_server.py /app/rest_server.py
 COPY resolve_timezone.py /app/resolve_timezone.py
-COPY security_config.py prepare_runtime.py browser_policy.py credential_login.py network_info.py /app/
+COPY security_config.py prepare_runtime.py browser_policy.py credential_login.py network_info.py crash_monitor.py /app/
 
 # Set execution permissions
 RUN chmod a+x /run.sh /app/launch-browser.sh

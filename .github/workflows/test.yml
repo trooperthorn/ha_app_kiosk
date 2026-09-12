@@ -98,8 +98,14 @@ jobs:
           exit 1
       - name: Verify browser under enforced AppArmor
         run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/browser_security_smoke.py
-      - name: Verify Cage and production launcher under AppArmor
-        run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" local/app-kiosk:${{ github.sha }} /app/tests/compositor_smoke.py
+      - name: Keep deliberate crash tests out of the runner host dump collector
+        run: |
+          # Piped host collectors ignore RLIMIT_CORE and can strand container crashes.
+          # Only this disposable CI VM changes; production host settings are untouched.
+          cat /proc/sys/kernel/core_pattern
+          sudo sysctl -w kernel.core_pattern=core
+      - name: Verify sustained rendering, audio and crash recovery under AppArmor
+        run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=b2ecadf4_app_kiosk --entrypoint python3 -v "$PWD/tests:/app/tests:ro" -v "$PWD/tests/asound.conf:/etc/asound.conf:ro" local/app-kiosk:${{ github.sha }} /app/tests/compositor_smoke.py
       - name: AppArmor denial diagnostics
         if: failure()
         run: sudo journalctl -k --since '20 minutes ago' --no-pager | grep -E 'apparmor|DENIED' || true
