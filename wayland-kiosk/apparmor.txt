@@ -80,7 +80,8 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     network netlink raw,
     network netlink dgram,
     signal (send,receive),
-    ptrace (read,trace),
+    # Both tracer and tracee must authorize access; Supervisor renames the parent.
+    ptrace (read,trace,readby,tracedby) peer=**//browser,
     # Chromium creates its own user/PID/network namespaces and seccomp sandbox.
     # These profile permissions do not grant host capabilities to its uid.
     capability sys_admin,
