@@ -15,7 +15,7 @@ from crash_monitor import watch_crashes
 
 Path('/data').mkdir(exist_ok=True)
 Path('/data/options.json').write_text(json.dumps({'lock_navigation': False, 'audio_enabled': True}))
-Path('/etc/asound.conf').write_text('pcm.!default { type null }\nctl.!default { type null }\n')
+assert Path('/etc/asound.conf').is_file(), 'Mount tests/asound.conf read-only for audio fixture'
 subprocess.run(['python3', '/app/prepare_runtime.py'], check=True)
 subprocess.run(['python3', '/app/browser_policy.py', 'http://homeassistant:8123'], check=True)
 class Handler(http.server.BaseHTTPRequestHandler):

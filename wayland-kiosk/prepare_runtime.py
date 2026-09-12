@@ -88,7 +88,7 @@ def launch(command):
         'SEATD_VTBOUND', 'WLR_BACKENDS', 'CAGE_TOUCH_OUTPUT', 'CHROME_DESKTOP',
     }}
     env.update(HOME=str(HOME), USER='kiosk', LOGNAME='kiosk',
-               FONTCONFIG_PATH='/etc/fonts', FONTCONFIG_FILE='/etc/fonts/fonts.conf',
+               PYTHONDONTWRITEBYTECODE='1', FONTCONFIG_PATH='/etc/fonts', FONTCONFIG_FILE='/etc/fonts/fonts.conf',
                XDG_CACHE_HOME=str(HOME / '.cache'))
     if options.get('audio_enabled', True):
         env.update({k: v for k, v in os.environ.items() if k.startswith('PULSE_')})

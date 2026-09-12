@@ -104,6 +104,7 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     owner /proc/*/{oom_score_adj,uid_map,gid_map,setgroups} w,
     owner /proc/*/task/*/comm rw,
     /sys/{,**} r,
+    /etc/udev/{,**} r,
     /etc/asound.conf r,
     /etc/alsa/{,**} r,
     /etc/pulse/{,**} r,
