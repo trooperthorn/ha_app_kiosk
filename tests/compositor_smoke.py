@@ -52,6 +52,30 @@ with open('/tmp/compositor.log', 'w+') as log:
             time.sleep(0.2)
         else:
             raise AssertionError('Wayland browser did not start')
+        # AppArmor's capability allowance must not add a container/desktop capability.
+        container_status = Path('/proc/self/status').read_text()
+        bounded = int(next(line.split()[1] for line in container_status.splitlines()
+                           if line.startswith('CapBnd:')), 16)
+        assert not bounded & (1 << 19), 'Container unexpectedly has SYS_PTRACE'
+        desktop_found = False
+        for directory in Path('/proc').iterdir():
+            if not directory.name.isdigit():
+                continue
+            try:
+                argv = (directory / 'cmdline').read_bytes().split(b'\0')
+                if argv[0] != b'/usr/lib/chromium/chromium' or any(a.startswith(b'--type=') for a in argv):
+                    continue
+                status = (directory / 'status').read_text()
+                effective = int(next(line.split()[1] for line in status.splitlines()
+                                     if line.startswith('CapEff:')), 16)
+                uid = int(next(line.split()[1] for line in status.splitlines()
+                               if line.startswith('Uid:')))
+                assert uid == 1000 and effective == 0, (uid, effective)
+                desktop_found = True
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+        assert desktop_found, 'Browser privilege check did not find the desktop process'
+        print('PASS: no container SYS_PTRACE and zero effective desktop capabilities', flush=True)
         async def exercise():
             state = {'renderer_crashes': 0, 'last_crash': None}
             monitor = asyncio.create_task(watch_crashes(state))
