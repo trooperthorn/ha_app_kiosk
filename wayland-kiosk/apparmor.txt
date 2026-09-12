@@ -84,6 +84,8 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     # These profile permissions do not grant host capabilities to its uid.
     capability sys_admin,
     capability sys_chroot,
+    # Allow checks in Chromium's own user namespace; no container SYS_PTRACE.
+    capability sys_ptrace,
     capability setuid,
     capability setgid,
     mount fstype=proc -> /proc/,

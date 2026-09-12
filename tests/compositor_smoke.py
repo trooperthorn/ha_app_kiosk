@@ -109,7 +109,7 @@ with open('/tmp/compositor.log', 'w+') as log:
                     print('PASS: 60 seconds of canvas/font/audio rendering without target crashes', flush=True)
                     # A deliberate renderer crash must be recorded and a reload must recover.
                     await ws.send_json({'id': 9999, 'method': 'Page.crash'})
-                    # Production disables the unusable ptrace crash handler.
+                    # Renderer termination must be visible promptly under the production profile.
                     for _ in range(100):
                         if state['renderer_crashes']:
                             break
