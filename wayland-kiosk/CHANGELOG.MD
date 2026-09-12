@@ -1,5 +1,6 @@
 # 2026.09.12.1
 
+- Prevent a reproduced >90-second renderer teardown stall by disabling the unusable ptrace-based Crashpad handler; retain CDP exit diagnostics and browser sandboxing.
 - Restore scoped ALSA/PulseAudio configuration access and install the PulseAudio ALSA plugin.
 - Permit browser netlink device/network monitoring without host network or NET_ADMIN.
 - Configure font discovery explicitly and permit read-only system font caches.
@@ -66,7 +67,7 @@
   independent of any `TZ` variable) is enough for `date` but not reliably
   for Chromium's bundled ICU. The app now resolves a zone name from `TZ`,
   `/etc/timezone`, or the `/etc/localtime` symlink target, and exports it as
-  `TZ` — the one signal Chromium does honor — for every child process.
+  `TZ` â€” the one signal Chromium does honor â€” for every child process.
 - Fix: the kiosk could sit on a Chromium error page indefinitely after Home
   Assistant restarted. The watchdog only tested whether the renderer was
   responsive, and an error page is a healthy renderer, so nothing recovered

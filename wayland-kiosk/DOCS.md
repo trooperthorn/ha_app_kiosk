@@ -419,8 +419,13 @@ failures, but the cumulative crash count remains until the app restarts.
 The runtime changes address verified permission and dependency failures. The
 reported physical-device renderer crashes still need an extended run of this
 release to establish whether they are resolved. If they recur, retain the first
-`Chromium target crashed` and `Renderer failure diagnostics` lines. Crashpad's
-ptrace denial alone is not the crash cause; the app does not request SYS_PTRACE.
+`Chromium target crashed` and `Renderer failure diagnostics` lines. The app does not request SYS_PTRACE. In enforced AppArmor testing, Crashpad's
+failed ptrace attachment left a deliberately crashed renderer stuck for over
+90 seconds. The launcher disables Crashpad using Chromium's
+`--disable-crashpad-for-testing` switch (validated against the packaged browser).
+Local minidumps are unavailable; CDP exit diagnostics and watchdog recovery remain
+active. This prevents the blocked crash handler from delaying renderer teardown;
+it does not establish the original dashboard crash trigger.
 
 Chromium may still log Google messaging registration failures despite disabled
 notifications/background mode. These upstream messages remain visible; the app

@@ -22,6 +22,9 @@ chromium_args=(
     --disable-sync
     --disable-background-networking
     --disable-component-update
+    # Confined Crashpad cannot ptrace renderers and can leave them stuck dying.
+    # CDP target events provide exit diagnostics without privileged minidumps.
+    --disable-crashpad-for-testing
     --disable-notifications
     --disable-push-api-background-mode
     --disable-gpu-shader-disk-cache
