@@ -25,7 +25,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(b'<html><body>Kiosk runtime test</body></html>')
     def log_message(self, *args):
         pass
-server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+# Chromium preconnects idle sockets; one idle client must not block reloads/shutdown.
+server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
 env = {**os.environ, 'XDG_RUNTIME_DIR': '/tmp/xdg', 'WLR_BACKENDS': 'headless',
@@ -154,7 +155,9 @@ with open('/tmp/compositor.log', 'w+') as log:
                 await monitor
             except asyncio.CancelledError:
                 pass
-        asyncio.run(exercise())
+        async def bounded_exercise():
+            await asyncio.wait_for(exercise(), timeout=180)
+        asyncio.run(bounded_exercise())
     finally:
         server.shutdown()
         server.server_close()
