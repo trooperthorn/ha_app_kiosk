@@ -25,7 +25,7 @@ async def watch_crashes(state):
                                        timeout=ClientTimeout(total=5)) as response:
                     response.raise_for_status()
                     info = await response.json()
-                async with session.ws_connect(info['webSocketDebuggerUrl'], heartbeat=20) as ws:
+                async with session.ws_connect(info['webSocketDebuggerUrl']) as ws:
                     await ws.send_json({'id': 1, 'method': 'Target.setDiscoverTargets',
                                         'params': {'discover': True}})
                     failures = 0
@@ -33,6 +33,11 @@ async def watch_crashes(state):
                         if message.type != WSMsgType.TEXT:
                             continue
                         event = message.json()
+                        if event.get('id') == 1:
+                            if 'error' in event:
+                                raise RuntimeError('Crash event subscription rejected')
+                            state['crash_monitor_connected'] = True
+                            logging.info('Browser crash event subscription active.')
                         if event.get('method') == 'Target.targetCrashed':
                             params = event.get('params', {})
                             state['renderer_crashes'] += 1
@@ -51,4 +56,5 @@ async def watch_crashes(state):
             failures += 1
             if failures == 3 or failures % 60 == 0:
                 logging.warning('Browser crash monitor reconnecting (%s).', type(error).__name__)
+        state['crash_monitor_connected'] = False
         await asyncio.sleep(5)

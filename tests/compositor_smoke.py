@@ -107,6 +107,7 @@ with open('/tmp/compositor.log', 'w+') as log:
                     result = await command('Runtime.evaluate', {'expression': 'sound.state', 'returnByValue': True})
                     assert result['result']['value'] == 'running', result
                     print('PASS: 60 seconds of canvas/font/audio rendering without target crashes', flush=True)
+                    assert state.get('crash_monitor_connected'), state
                     # A deliberate renderer crash must be recorded and a reload must recover.
                     await ws.send_json({'id': 9999, 'method': 'Page.crash'})
                     # Renderer termination must be visible promptly under the production profile.
@@ -114,7 +115,6 @@ with open('/tmp/compositor.log', 'w+') as log:
                         if state['renderer_crashes']:
                             break
                         await asyncio.sleep(0.1)
-                    assert state['renderer_crashes'] == 1, state
                     await command('Page.reload')
                     for _ in range(30):
                         result = await command('Runtime.evaluate', {'expression': '1', 'returnByValue': True})
@@ -123,6 +123,7 @@ with open('/tmp/compositor.log', 'w+') as log:
                         await asyncio.sleep(0.2)
                     else:
                         raise AssertionError('Renderer did not recover after reload')
+                    assert state['renderer_crashes'] == 1, state
                     print('PASS: crash event includes exit status/code and page reload recovers', flush=True)
             monitor.cancel()
             try:

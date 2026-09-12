@@ -29,6 +29,7 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
   /usr/bin/{seatd,wlr-randr,wtype,swayidle,vainfo,certutil,openssl,killall} rix,
   /usr/local/bin/cage rix,
   /usr/bin/{dbus-run-session,dbus-daemon} rix,
+  /usr/libexec/at-spi-bus-launcher rix,
   /usr/lib/bashio/** rix,
   /usr/bin/bashio rix,
   /run.sh rix,
