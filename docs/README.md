@@ -17,3 +17,13 @@
 
 User-facing configuration documentation (what Supervisor renders in the app
 store) lives in `wayland-kiosk/DOCS.md`, not here.
+
+Trusted Networks Configuration to never ask for password:
+
+trusted_networks:
+  - 172.30.33.0/24
+
+trusted_users:
+  172.30.33.0/24: < USERID >
+
+allow_bypass_login: true
