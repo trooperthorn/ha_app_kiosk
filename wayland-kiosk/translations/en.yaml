@@ -87,6 +87,10 @@
     "input_devices": {
       "name": "Touchscreen and input devices",
       "description": "Select the touchscreen and pointer event devices from Settings > System > Hardware. Other input devices are not granted access."
+    },
+    "debug_logging": {
+      "name": "Debug logging",
+      "description": "Enable detailed compositor diagnostics for troubleshooting."
     }
   }
 }

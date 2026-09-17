@@ -9,6 +9,9 @@ else
     bashio::log.warning "Could not apply transform ${KIOSK_ROTATION_TRANSFORM} to ${KIOSK_OUTPUT}; Chromium will still be started."
 fi
 
+# Retain exit diagnostics without creating unbounded native core files.
+ulimit -c 0
+
 chromium_args=(
     --kiosk
     --start-fullscreen
@@ -22,7 +25,8 @@ chromium_args=(
     --disable-sync
     --disable-background-networking
     --disable-component-update
-    --disable-features=GCM
+    --disable-notifications
+    --disable-push-api-background-mode
     --disable-gpu-shader-disk-cache
     --disable-dev-shm-usage
     --disable-session-crashed-bubble

@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026.09.12.2 - Restart after browser crashes and blank pages
+
+- Restart the kiosk after a recorded Chromium target crash, even if JavaScript responds again.
+- Check visible content in open shadow roots and animation progress; reload once and restart after repeated failures using the same final rendering check.
+- Preserve intentional display-off behavior and require Home Assistant Watchdog for app restart recovery.
+- Read the debug logging option locally without requesting Supervisor API access.
+- Add regression coverage for blank pages, hidden content, shadow DOM, and the real watchdog stopping Cage under AppArmor.
+- Software rendering checks cannot verify physical monitor output; extended device validation remains necessary.
+
+## 2026.09.12.1 - Runtime recovery and diagnostics
+
+- Permit the browser crash handler capability check inside its AppArmor profile without granting the container SYS_PTRACE privilege; retain CDP exit diagnostics and browser sandboxing.
+- Restore scoped ALSA/PulseAudio configuration access and install the PulseAudio ALSA plugin.
+- Permit browser netlink device/network monitoring without host network or NET_ADMIN.
+- Configure font discovery explicitly and permit read-only system font caches.
+- Start a private desktop D-Bus session; disable browser notifications/push background mode.
+- Add browser crash status/code and OOM-counter diagnostics, including memory at watchdog failures.
+- Apply Central Time before app logs, clarify memory/API/authentication messages, and make detailed compositor logging optional.
+- Exercise sustained canvas/font/audio rendering and intentional crash/reload recovery in CI.
+- Physical kiosk crash resolution requires an extended device run; crash diagnostics no longer depend on ptrace.
+
 ## 2026.09.11.5 - Internal app address logging
 
 - Log the app internal IP addresses and route-selected source address toward

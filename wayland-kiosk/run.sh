@@ -4,6 +4,16 @@
 python3 /app/prepare_runtime.py
 unset SUPERVISOR_TOKEN HASSIO_TOKEN
 
+# Resolve before starting either the API or Chromium. An explicit option wins
+# over Supervisor's environment; do not replace a mounted /etc/localtime.
+KIOSK_TZ=$(python3 /app/resolve_timezone.py)
+if [ -n "$KIOSK_TZ" ]; then
+    export TZ="$KIOSK_TZ"
+    bashio::log.info "Time zone resolved as ${KIOSK_TZ}; exported as TZ for Chromium."
+else
+    bashio::log.warning "Could not resolve a named time zone. Set the app time_zone option (for US Central: America/Chicago)."
+fi
+
 bashio::log.info "================ SYSTEM DIAGNOSTICS ================"
 
 # 1. Check GPU / DRM devices
@@ -66,16 +76,6 @@ chown kiosk:kiosk "$XDG_RUNTIME_DIR"
 # HOME must be set for Chromium and the launcher wrapper's stat check; see
 # docs/operations.md.
 export HOME=/root
-
-# Resolve before starting either the API or Chromium. An explicit option wins
-# over Supervisor's environment; do not replace a mounted /etc/localtime.
-KIOSK_TZ=$(python3 /app/resolve_timezone.py)
-if [ -n "$KIOSK_TZ" ]; then
-    export TZ="$KIOSK_TZ"
-    bashio::log.info "Time zone resolved as ${KIOSK_TZ}; exported as TZ for Chromium."
-else
-    bashio::log.warning "Could not resolve a named time zone. Set the app time_zone option (for US Central: America/Chicago)."
-fi
 
 # Seat management (seatd)
 bashio::log.info "Starting seat management daemon..."
@@ -318,7 +318,7 @@ fi
 # Credential entry is performed by the API's origin-checked CDP task.
 # No username/password is passed to a process argument or keyboard focus.
 if [ "$AUTH_METHOD" = "trusted_networks" ]; then
-    bashio::log.warning "Bridge networking no longer uses Core's loopback trusted-network rule. Prefer a persistent non-admin login; use the logged Trusted-network CIDR for this app's direct connection and map only the kiosk user."
+    bashio::log.info "Trusted-network authentication uses the app source address shown above; it can change after reboot. Use a dedicated non-admin user. Trusting the app subnet also trusts other apps in that subnet."
 fi
 
 # Chromium runtime. Launch flags are explained in docs/operations.md; the
@@ -340,4 +340,9 @@ export KIOSK_DARK_MODE="$DARK_MODE"
 
 bashio::log.info "Starting Cage with Chromium pointing to: ${URL}"
 
-exec python3 /app/prepare_runtime.py launch /usr/local/bin/cage -s -- /app/launch-browser.sh
+# A private desktop session bus; never connects to the host system bus.
+cage_args=(-s)
+if [ "$(read_option 'debug_logging' 'false')" = "true" ]; then
+    cage_args+=(-D)
+fi
+exec python3 /app/prepare_runtime.py launch /usr/bin/dbus-run-session -- /usr/local/bin/cage "${cage_args[@]}" -- /app/launch-browser.sh

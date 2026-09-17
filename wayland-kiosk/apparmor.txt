@@ -28,6 +28,8 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
   /usr/bin/{bash,env,id,jq,date,python3,python3.*,curl,head,grep,sed,cut,ls,cat,chmod,chown,mkdir,seq,sleep,readlink} rix,
   /usr/bin/{seatd,wlr-randr,wtype,swayidle,vainfo,certutil,openssl,killall} rix,
   /usr/local/bin/cage rix,
+  /usr/bin/{dbus-run-session,dbus-daemon} rix,
+  /usr/libexec/at-spi-bus-launcher rix,
   /usr/lib/bashio/** rix,
   /usr/bin/bashio rix,
   /run.sh rix,
@@ -74,12 +76,18 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     network inet dgram,
     network inet6 dgram,
     network unix,
+    # Chromium address tracking and udev event monitoring; no NET_ADMIN.
+    network netlink raw,
+    network netlink dgram,
     signal (send,receive),
-    ptrace (read,trace),
+    # Both tracer and tracee must authorize access; Supervisor renames the parent.
+    ptrace (read,trace,readby,tracedby) peer=**//browser,
     # Chromium creates its own user/PID/network namespaces and seccomp sandbox.
     # These profile permissions do not grant host capabilities to its uid.
     capability sys_admin,
     capability sys_chroot,
+    # Allow checks in Chromium's own user namespace; no container SYS_PTRACE.
+    capability sys_ptrace,
     capability setuid,
     capability setgid,
     mount fstype=proc -> /proc/,
@@ -100,6 +108,13 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     owner /proc/*/{oom_score_adj,uid_map,gid_map,setgroups} w,
     owner /proc/*/task/*/comm rw,
     /sys/{,**} r,
+    /etc/udev/{,**} r,
+    /etc/asound.conf r,
+    /etc/alsa/{,**} r,
+    /etc/pulse/{,**} r,
+    /var/cache/fontconfig/{,**} r,
+    # Fontconfig uses hard-link lock files only within its own cache.
+    owner /data/browser-home/.cache/fontconfig/** l,
     /run/audio/** rw,
     /run/udev/** r,
     # No access to /data/options.json, root credentials, or shared HA storage.
