@@ -8,7 +8,7 @@ import json
 import hmac
 from security_config import load_options, validate_options, validate_url, origin
 from credential_login import credential_login
-from crash_monitor import watch_crashes, memory_events
+from crash_monitor import watch_crashes, memory_events, process_census
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
@@ -47,6 +47,7 @@ RUNTIME_STATE: Dict[str, Any] = {
     "container_memory_limit_bytes": None,
     "chromium_rss_bytes": None,
     "chromium_rss_peak_bytes": None,
+    "process_census": None,
 }
 
 # CDP calls are serialized; see docs/design.md.
@@ -714,6 +715,8 @@ async def main():
     asyncio.create_task(report_browser_timezone())
     asyncio.create_task(watch_crashes(RUNTIME_STATE))
     logging.info("Browser crash event monitor initialized (no ptrace capability).")
+    asyncio.create_task(process_census(RUNTIME_STATE))
+    logging.info("Chromium process census initialized (logs when a child process or target comes or goes).")
     asyncio.create_task(chromium_watchdog())
     logging.info("Chromium Watchdog initialized.")
     asyncio.create_task(display_freeze_watcher())

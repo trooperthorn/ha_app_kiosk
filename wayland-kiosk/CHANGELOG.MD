@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Log a Chromium process census: one line whenever a child process or
+  DevTools target appears or disappears (`SystemInfo.getProcessInfo` and
+  `Target.getTargets` over CDP, once a minute, read-only). The host journal
+  records every Chromium child that dies (a live install showed a renderer
+  ending with SIGILL every 10-30 minutes, 1,107 times in twelve days) but
+  not which child it was; the census line says whether the dashboard's
+  own page target survived, which is the difference between a crashing
+  dashboard and a discarded spare or worker renderer.
+- AppArmor: allow the root setup's directory reads on `/` and
+  `/root/.cache`, and the browser's read of `/etc/machine-id` and `/data/`;
+  quietly deny Chromium's startup probes of `/usr/lib/chromium/extensions/`
+  and `/proc/*/clear_refs`. All were denials in a live install's audit log.
+
 ## 2026.09.12.2 - Restart after browser crashes and blank pages
 
 - Restart the kiosk after a recorded Chromium target crash, even if JavaScript responds again.

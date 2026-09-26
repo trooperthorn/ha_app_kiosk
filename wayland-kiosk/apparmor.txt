@@ -36,6 +36,12 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
   /app/ r,
   /app/** r,
   /app/launch-browser.sh rix,
+  # Directory listings the setup scripts perform (audit on a live HAOS 18.1
+  # install: `open` on "/" and `mkdir` under /root/.cache).
+  / r,
+  /root/ r,
+  /root/.cache/ rw,
+  /root/.cache/** rwk,
   /usr/lib/** mr,
   /lib/** mr,
   /usr/share/** r,
@@ -97,6 +103,14 @@ profile app_kiosk flags=(attach_disconnected,mediate_deleted) {
     /lib/** mr,
     /usr/share/** r,
     /etc/{hosts,hostname,resolv.conf,nsswitch.conf,passwd,group,localtime,timezone} r,
+    # D-Bus and Chromium's own metrics read the machine id (denied in the
+    # live audit log at every browser start).
+    /etc/machine-id r,
+    /data/ r,
+    # Chromium probes these at startup and copes without them; deny quietly
+    # so the audit log stays clean.
+    deny /usr/lib/chromium/extensions/ w,
+    deny /proc/*/clear_refs w,
     /etc/{fonts,ssl,chromium,chromium-browser,opt/chrome}/{,**} r,
     /data/browser-home{,/**} rwk,
     /data/chromium-profile{,/**} rwk,
