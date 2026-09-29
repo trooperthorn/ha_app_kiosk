@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Crash lines now say which page died and what it logged just before. The
+  crash monitor records each DevTools target's URL (scheme, host and path
+  only; queries and fragments carry auth codes) and attaches to page
+  targets to keep their last 8 uncaught exceptions and `console.error`
+  calls, redacted and capped at 200 characters each. Ten seconds after a
+  crash it names the newest crashpad minidumps under
+  `/data/chromium-profile/Crash Reports` so one can be pulled for
+  symbolization. Chromium release builds print nothing for a failed
+  `CHECK`, so the renderer SIGILL crashes (21 in three hours on a live
+  install) could not be tied to a dashboard card before.
 - Add Intel's iHD VA-API driver (`intel-media-driver`, amd64 only) next to
   Mesa's AMD backend, so camera video decodes on the GPU on Intel hosts too.
   A live move from an AMD Ryzen host to an Intel i5-8250U (UHD 620) showed
