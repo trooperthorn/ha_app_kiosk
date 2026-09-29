@@ -59,6 +59,7 @@ option works because it appears in the UI.
 | `ha_sidebar` | not applied yet | Accepted by the schema, read nowhere. Hiding the sidebar is better done with the kiosk-mode frontend plugin inside Home Assistant. |
 | `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
 | `dark_mode` | applied | `true` by default. Starts Chromium with `--force-dark-mode`, so the browser reports `prefers-color-scheme: dark`. Home Assistant follows that only when the kiosk user's theme is set to Auto; see "Always-dark browser" below. |
+| `legacy_drm_commit` | applied | `false` by default. Sets `WLR_DRM_NO_ATOMIC=1` so Cage uses legacy DRM commits. Enable only if the log keeps repeating `Atomic commit failed: Resource busy`, seen on Intel i915 with a rotated output. Restart required. |
 
 ## Locking the kiosk to the dashboard
 
@@ -335,11 +336,14 @@ dismisses itself after `timeout` milliseconds. The same mechanism covers
 scripts (`action: browser_mod.popup` inside any script) and navigation
 (`browser_mod.navigate` to send the kiosk to another dashboard).
 
-On AMD systems, the image includes Mesa's Gallium VA-API backend so Chromium
-can decode supported camera video formats on the GPU. At startup the add-on
-tests `/dev/dri/renderD128` with `vainfo`. A healthy AMD host logs
-`VA-API hardware video decoding available` followed by the Mesa driver
-name. A probe failure is non-fatal, but means video decoding will use CPU
+The image includes two VA-API backends so Chromium can decode supported
+camera video formats on the GPU: Mesa's Gallium backend for AMD, and Intel's
+iHD media driver for Intel Broadwell (Gen8) and newer, amd64 only. libva
+picks the right one by PCI ID, so the same image works after moving between
+AMD and Intel hosts. At startup the add-on tests `/dev/dri/renderD128` with
+`vainfo`. A healthy host logs `VA-API hardware video decoding available`
+followed by the Mesa or Intel iHD driver name. Intel GPUs older than
+Broadwell are not covered. A probe failure is non-fatal, but means video decoding will use CPU
 until the DRM permissions or driver are corrected.
 
 ## Selected device access

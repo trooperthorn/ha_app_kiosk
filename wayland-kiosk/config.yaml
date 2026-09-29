@@ -36,6 +36,7 @@ options:
   self_signed_certificate: ""
   audio_enabled: true
   debug_logging: false
+  legacy_drm_commit: false
   control_api_enabled: false
   gpu_devices:
     - /dev/dri/card0
@@ -66,6 +67,7 @@ schema:
   self_signed_certificate: str?
   audio_enabled: bool
   debug_logging: bool
+  legacy_drm_commit: bool
   control_api_enabled: bool
   gpu_devices:
     - device(subsystem=drm)

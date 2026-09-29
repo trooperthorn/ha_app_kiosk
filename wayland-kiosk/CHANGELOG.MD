@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add Intel's iHD VA-API driver (`intel-media-driver`, amd64 only) next to
+  Mesa's AMD backend, so camera video decodes on the GPU on Intel hosts too.
+  A live move from an AMD Ryzen host to an Intel i5-8250U (UHD 620) showed
+  the startup probe failing on both `iHD` and `i965` and every stream
+  falling back to CPU. The AMD backend stays, so the image works on either.
+- Pass `--disable-features=GCM`, which docs/operations.md already listed but
+  the launcher never set; this ends the repeated `DEPRECATED_ENDPOINT` and
+  `QUOTA_EXCEEDED` registration errors.
+- New `legacy_drm_commit` option (default off) sets `WLR_DRM_NO_ATOMIC=1`
+  for GPUs whose atomic commits keep failing with `Resource busy`.
+- Document the expected startup log noise (system D-Bus, sandboxed
+  Fontconfig, crashpad) and that renderer SIGILL crashes are Chromium
+  assertions, not a CPU incompatibility.
 - Log a Chromium process census: one line whenever a child process or
   DevTools target appears or disappears (`SystemInfo.getProcessInfo` and
   `Target.getTargets` over CDP, once a minute, read-only). The host journal

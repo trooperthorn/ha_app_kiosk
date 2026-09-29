@@ -85,7 +85,7 @@ def launch(command):
             groups.add(Path(path).stat().st_gid)
     env = {k: v for k, v in os.environ.items() if k.startswith('KIOSK_') or k in {
         'PATH', 'TZ', 'XDG_RUNTIME_DIR', 'LIBSEAT_BACKEND', 'SEATD_SOCK',
-        'SEATD_VTBOUND', 'WLR_BACKENDS', 'CAGE_TOUCH_OUTPUT', 'CHROME_DESKTOP',
+        'SEATD_VTBOUND', 'WLR_BACKENDS', 'WLR_DRM_NO_ATOMIC', 'CAGE_TOUCH_OUTPUT', 'CHROME_DESKTOP',
     }}
     env.update(HOME=str(HOME), USER='kiosk', LOGNAME='kiosk',
                PYTHONDONTWRITEBYTECODE='1', FONTCONFIG_PATH='/etc/fonts', FONTCONFIG_FILE='/etc/fonts/fonts.conf',

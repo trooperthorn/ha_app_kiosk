@@ -124,6 +124,32 @@ used in addition to `--kiosk` because Cage maximizes its single application
 window, and `--app` removes tabs and the address bar even on Wayland builds
 that ignore Chromium's early fullscreen request.
 
+## Expected log noise
+
+These lines appear on every start and do not indicate a fault:
+
+- `Failed to connect to the bus: ... /run/dbus/system_bus_socket` and the
+  UPower `GetAll` failure. The browser gets a private D-Bus session bus only
+  and deliberately never reaches the host system bus.
+- `Fontconfig error: Cannot load default config file: No such file: (null)`.
+  Emitted by a sandboxed Chromium utility process (the audio service) that
+  cannot see `/etc/fonts`; the browser itself is given `FONTCONFIG_FILE` by
+  `prepare_runtime.py` and renders fonts normally.
+- `vaInitialize failed` from Chromium, when the startup `vainfo` probe also
+  failed. Fix the probe (driver or device selection) and this goes away.
+- crashpad `sched_getscheduler: Function not implemented (38)` bursts, which
+  accompany a crash report under the seccomp sandbox.
+
+`Atomic commit failed: Resource busy` from Cage is harmless when occasional.
+If it repeats every few minutes or the screen stops updating, enable the
+`legacy_drm_commit` option.
+
+A renderer ending with `error_code=132` (SIGILL, logged by the kernel as
+`trap invalid opcode ... in chromium`) is a Chromium internal assertion, not
+a CPU mismatch: Alpine builds Chromium for baseline x86-64, and the same
+crash was recorded on both AMD Ryzen and Intel Kaby Lake hosts. The
+watchdog restarts the kiosk; the process census line shows which child died.
+
 `--disable-pinch` turns off Chromium's compositor-level touchscreen pinch
 gesture. Home Assistant's own page already declares `user-scalable=no` in
 its viewport meta tag, which stops page-level pinch and double-tap zoom,
