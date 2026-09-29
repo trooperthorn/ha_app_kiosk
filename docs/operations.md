@@ -149,6 +149,13 @@ A renderer ending with `error_code=132` (SIGILL, logged by the kernel as
 a CPU mismatch: Alpine builds Chromium for baseline x86-64, and the same
 crash was recorded on both AMD Ryzen and Intel Kaby Lake hosts. The
 watchdog restarts the kiosk; the process census line shows which child died.
+Release builds print nothing for a failed check, so the crash monitor adds
+context: the crash line carries the page URL (path only), the next line lists
+the page's last uncaught exceptions and `console.error` calls (redacted), and
+a line ten seconds later names the newest crashpad minidumps under
+`/data/chromium-profile/Crash Reports`. To find the card that triggers a
+crash, point `ha_dashboard` at a page with no cards (for example `profile`)
+and see whether the crashes stop.
 
 `--disable-pinch` turns off Chromium's compositor-level touchscreen pinch
 gesture. Home Assistant's own page already declares `user-scalable=no` in
