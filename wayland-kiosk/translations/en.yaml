@@ -91,6 +91,10 @@
     "debug_logging": {
       "name": "Debug logging",
       "description": "Enable detailed compositor diagnostics for troubleshooting."
+    },
+    "legacy_drm_commit": {
+      "name": "Legacy DRM commits",
+      "description": "Use legacy display commits instead of atomic ones. Enable only if the log repeats 'Atomic commit failed: Resource busy' (seen on some Intel GPUs)."
     }
   }
 }

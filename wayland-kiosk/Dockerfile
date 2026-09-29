@@ -21,6 +21,8 @@ RUN apk upgrade --no-cache
 # Install Cage, Chromium, Wayland tools, and Python environment.
 # mesa-va-gallium supplies radeonsi_drv_video.so so Chromium can decode
 # AMD-accelerated H.264/VP8/VP9 camera streams instead of falling back to CPU.
+# Intel's iHD backend is added for amd64 in the next layer; both stay
+# installed so one image serves either GPU and libva picks by PCI ID.
 # libva-utils supplies vainfo for a concise startup capability probe.
 # curl provides the Home Assistant readiness probe.
 RUN apk add --no-cache \
@@ -51,6 +53,13 @@ RUN apk add --no-cache \
     openssl \
     python3 \
     py3-pip
+
+# intel-media-driver supplies iHD_drv_video.so for Intel Broadwell (Gen8)
+# and newer GPUs, including the UHD 620 in Kaby Lake R hosts. Alpine
+# publishes it for x86_64 only, so aarch64 builds skip it.
+RUN if [ "${BUILD_ARCH}" = "amd64" ]; then \
+        apk add --no-cache intel-media-driver; \
+    fi
 
 # aiohttp via pip, not the py3-aiohttp apk package: Alpine's packaged version
 # lags behind aiohttp's own fixed releases (see docs/security.md). py3-pip

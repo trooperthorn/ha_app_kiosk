@@ -146,6 +146,13 @@ ALLOW_HTTP=$(read_option 'allow_http' 'true')
 LOCK_NAVIGATION=$(read_option 'lock_navigation' 'true')
 DARK_MODE=$(read_option 'dark_mode' 'true')
 
+# Opt-in legacy DRM commits for GPUs whose atomic commits keep failing with
+# "Resource busy" (seen on Intel i915 with a rotated output); see DOCS.md.
+if [ "$(read_option 'legacy_drm_commit' 'false')" = "true" ]; then
+    export WLR_DRM_NO_ATOMIC=1
+    bashio::log.info "Legacy DRM commits enabled (WLR_DRM_NO_ATOMIC=1)."
+fi
+
 # Append the dashboard path (default "lovelace", HA's Overview page).
 if [ -n "$HA_DASHBOARD" ]; then
     dashboard_path="${HA_DASHBOARD#/}"
