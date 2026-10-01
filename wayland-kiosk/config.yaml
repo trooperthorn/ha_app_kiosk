@@ -45,6 +45,7 @@ options:
   ha_dashboard: "lovelace"
   browser_refresh: 12000
   lock_navigation: true
+  allowed_origins: []
   return_to_dashboard: 0
   ha_sidebar: "none"
   ha_theme: ""
@@ -76,6 +77,8 @@ schema:
   ha_dashboard: str?
   browser_refresh: int(0,)
   lock_navigation: bool
+  allowed_origins:
+    - "str(1,)"
   return_to_dashboard: int(0,)
   ha_sidebar: list(full|narrow|none)
   ha_theme: str?

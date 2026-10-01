@@ -54,7 +54,8 @@ option works because it appears in the UI.
 | `ignore_certificate_errors` | retired | Ignored legacy option; use explicit certificate trust below. |
 | `api_token` | applied | Required when the control API is enabled; minimum 32 characters. |
 | `browser_refresh` | applied | Periodic page refresh interval in seconds. `0` disables periodic refresh. |
-| `lock_navigation` | applied | `false` by default. When `true`, a Chromium managed policy blocks every URL except the scheme, host and port of `ha_url`, and new windows are refused outright. See "Locking the kiosk to the dashboard" below. |
+| `lock_navigation` | applied | `true` by default. When `true`, a Chromium managed policy blocks every URL except the scheme, host and port of `ha_url` (plus any `allowed_origins`), and new windows are refused outright. See "Locking the kiosk to the dashboard" below. |
+| `allowed_origins` | applied | Empty by default. Extra origins that dashboard cards may embed in an iframe while `lock_navigation` is on, for example `https://web.weatherwise.app`. Exact `scheme://host[:port]` only. Ignored when `lock_navigation` is off, but still validated. See "Embedding other sites in dashboard cards" below. |
 | `return_to_dashboard` | applied | Seconds between checks that the page is still on the dashboard; if it is not, the browser is navigated back to `ha_url` + `ha_dashboard`. `0` (default) disables the check. |
 | `ha_sidebar` | not applied yet | Accepted by the schema, read nowhere. Hiding the sidebar is better done with the kiosk-mode frontend plugin inside Home Assistant. |
 | `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
@@ -67,19 +68,22 @@ A wall panel that can reach the open Internet is a wall panel someone will
 browse on. Two options close that off, and they cover different halves of the
 problem -- use both.
 
-`lock_navigation: true` keeps the browser on one host. At startup the app
-writes a Chromium managed policy (`URLBlocklist: ["*"]` plus a single
-`URLAllowlist` entry for the scheme, host and port of `ha_url`) into
-`/etc/chromium/policies/managed/kiosk-lockdown.json`. With the default
-`ha_url`, only `http://127.0.0.1:8123` loads; a link to
+`lock_navigation: true` (the default) keeps the browser on one host. At
+startup the app writes a Chromium managed policy (`URLBlocklist: ["*"]` plus
+a `URLAllowlist` entry for the scheme, host and port of `ha_url`, and one for
+each entry of `allowed_origins`) into
+`/etc/chromium/policies/managed/kiosk-security.json`. With the default
+`ha_url`, only `http://homeassistant:8123` loads; a link to
 `home-assistant.io`, a `file://` URL, or a `chrome://` page is refused by
 Chromium itself with a "Blocked Page" notice, and there is no address bar to
 type into. The same policy turns off popups, downloads, printing, incognito,
 the password manager, autofill, browser sign-in and sync, and Chromium is
 started with `--block-new-web-contents` so a `target="_blank"` link cannot
-open a second, unclosable window. The add-on log line to look for is
-"Navigation lockdown ON". Turning the option back off removes the policy file
-on the next start.
+open a second, unclosable window. The app log line to look for is
+"Navigation lockdown ON; allowed origins: ...", which lists every origin the
+policy allows; "Navigation lockdown OFF" means no allowlist is in force. The
+policy file is rewritten on every start, so turning the option off takes
+effect on the next restart.
 
 What this does **not** do is keep the user on the dashboard *inside* Home
 Assistant. Home Assistant's frontend is a single-page app: moving from the
@@ -111,8 +115,42 @@ option does not address it.
 Note for the control API: while `lock_navigation` is on, the `launch_url`
 command only accepts URLs on the same origin as `ha_url` and returns an
 error for anything else, rather than letting Chromium silently show a
-blocked page. `/api/health` reports the current state as
+blocked page. Origins in `allowed_origins` are deliberately not accepted
+there: they exist for embedded frames, not for putting another site
+full-screen. With no `url`, the command loads the dashboard address. `/api/health` reports the current state as
 `navigation_locked`.
+
+## Embedding other sites in dashboard cards
+
+The lock applies to every frame, not only the top-level page. A dashboard
+card that embeds a site in an iframe, such as a weather radar from
+`https://web.weatherwise.app`, shows Chromium's gray "blocked" page in that
+frame while the site is not allowed. Network requests made by scripts
+(`fetch` and XHR) are not affected by this policy, so only embedded pages
+need listing.
+
+Add the exact origin to `allowed_origins`, save, and restart the app:
+
+```yaml
+allowed_origins:
+  - https://web.weatherwise.app
+```
+
+Each entry must be `scheme://host` or `scheme://host:port`, with at most one
+trailing slash. Paths, queries, fragments, user information, wildcards, a
+leading dot, and ports outside 1 to 65535 are rejected, and the app refuses
+to start with a message that names every bad entry. `http` origins are
+accepted only while `allow_http` is on. Case and default ports are
+normalized, duplicates are dropped, and an entry equal to the Home Assistant
+origin is redundant and ignored.
+
+Two limits apply. First, an embedded site that redirects to another origin
+needs that origin listed too, because every origin in the frame's redirect
+chain is checked; if a frame stays gray, see "A card shows a gray blocked
+frame" in docs/operations.md. Second, a listed origin is allowed for the
+whole browser, so a link inside the embedded site can open it full-screen
+and the panel would stay there. Set `return_to_dashboard` to a number of
+seconds so the panel recovers on its own.
 
 ## Always-dark browser
 

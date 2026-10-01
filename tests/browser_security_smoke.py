@@ -83,3 +83,53 @@ with tempfile.TemporaryDirectory() as temp:
     finally:
         server.shutdown()
         server.server_close()
+
+
+# Navigation lockdown with allowed_origins, checked in the real browser: the
+# managed policy must let the HA origin and a listed origin load while any
+# other origin shows Chromium's blocked page. Plain HTTP on a loopback port
+# is enough because the policy matches on scheme, host and port.
+class MarkerHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+        try:
+            self.wfile.write(b'<body>KIOSK_ORIGIN_REACHED</body>')
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def log_message(self, *args):
+        pass
+
+
+def policy_browser(url):
+    return run(['python3', '/app/prepare_runtime.py', 'launch',
+        '/usr/lib/chromium/chromium', '--headless', '--disable-gpu', '--disable-gpu-shader-disk-cache', '--disable-software-rasterizer', '--use-gl=disabled',
+        '--no-first-run', '--disable-dev-shm-usage',
+        '--host-resolver-rules=MAP ha.test 127.0.0.1, MAP ok.test 127.0.0.1, MAP bad.test 127.0.0.1',
+        '--user-data-dir=/data/chromium-profile', '--dump-dom', url]).stdout
+
+
+POLICY_FILES = [Path(directory) / 'kiosk-security.json' for directory in (
+    '/etc/chromium/policies/managed', '/etc/chromium-browser/policies/managed', '/etc/opt/chrome/policies/managed')]
+server = http.server.HTTPServer(('127.0.0.1', 0), MarkerHandler)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+try:
+    port = server.server_port
+    ha_url = f'http://ha.test:{port}'
+    options = {'ha_url': ha_url, 'allow_http': True, 'lock_navigation': True,
+               'allowed_origins': [f'http://ok.test:{port}/']}
+    prepare(options)
+    run(['python3', '/app/browser_policy.py', ha_url])
+    policy = json.loads(POLICY_FILES[0].read_text())
+    assert policy['URLAllowlist'] == [ha_url, f'http://ok.test:{port}'], policy
+    assert 'KIOSK_ORIGIN_REACHED' in policy_browser(ha_url + '/'), 'HA origin blocked'
+    assert 'KIOSK_ORIGIN_REACHED' in policy_browser(f'http://ok.test:{port}/'), 'Allowed origin blocked'
+    assert 'KIOSK_ORIGIN_REACHED' not in policy_browser(f'http://bad.test:{port}/'), 'Unlisted origin loaded'
+    print('PASS: lockdown allows the HA origin and allowed_origins and blocks every other origin')
+finally:
+    server.shutdown()
+    server.server_close()
+    for policy_file in POLICY_FILES:
+        policy_file.unlink(missing_ok=True)
