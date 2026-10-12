@@ -6,23 +6,23 @@
     },
     "ha_dashboard": {
       "name": "Dashboard Path",
-      "description": "Optional specific Lovelace dashboard path."
+      "description": "Dashboard path appended to the Home Assistant URL. Leave unset for lovelace, the Overview dashboard."
     },
     "browser_refresh": {
       "name": "Browser Refresh Interval",
-      "description": "Time in seconds before refreshing the browser."
+      "description": "Seconds between automatic reloads of the page the browser is showing. 0 disables the reload. It reloads the current page and does not go home; use Return to dashboard for that. Restart after changing."
     },
     "ha_sidebar": {
-      "name": "Sidebar Visibility",
-      "description": "Configure visibility of the Home Assistant sidebar."
+      "name": "Sidebar Visibility (ignored)",
+      "description": "Not used. Hide the sidebar with the kiosk-mode frontend plugin inside Home Assistant. The setting is kept only so stored values stay valid."
     },
     "ha_theme": {
-      "name": "Theme Override",
-      "description": "Force a specific theme name."
+      "name": "Theme Override (ignored)",
+      "description": "Not used. Set the theme in the kiosk user's Home Assistant profile. The setting is kept only so stored values stay valid."
     },
     "dark_mode": {
       "name": "Dark Mode",
-      "description": "Enable or disable dark mode preference."
+      "description": "Start the browser with a dark color-scheme preference (prefers-color-scheme: dark). Home Assistant follows it only when the kiosk user's theme mode is Auto. Restart after changing."
     },
     "screen_timeout": {
       "name": "Screen Timeout",
@@ -34,7 +34,7 @@
     },
     "login_delay": {
       "name": "Login Delay",
-      "description": "Delay in seconds before attempting automated interactions."
+      "description": "Seconds to keep trying the automatic login (credentials mode only). The app retries for about this long, up to 120 seconds, then leaves the login page for manual use."
     },
     "ignore_certificate_errors": {
       "name": "Legacy certificate bypass (ignored)",

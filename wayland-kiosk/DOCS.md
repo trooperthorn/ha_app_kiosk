@@ -1,10 +1,4 @@
 # HAOS Wayland Kiosk
-- VT Binding update
-- Chrome Loaded
-- Touch moved this to full access
-- Rotation and touch rework
-- fallback on my cheap touch if dynamic fails
-
 
 ## A streamlined, hardware-accelerated kiosk integration for Home Assistant Operating System.
 
@@ -38,27 +32,27 @@ browser playback/connection, not Supervisor's static mount permission.
 ## Configuration Options
 
 Honesty note: not every option in the configuration screen is applied yet.
-The table below states exactly which options are wired into run.sh and which
-are accepted by the schema but currently have no effect. Do not assume an
+The table below states exactly which options are wired into the app and which
+are accepted by the schema but currently have no effect (marked ignored). Do not assume an
 option works because it appears in the UI.
 
 | Option | Status | Effect |
 |---|---|---|
 | `ha_url` | applied | URL the kiosk loads. Default `http://homeassistant:8123` on the private app network. |
-| `ha_dashboard` | applied | Appended to `ha_url` as a path. Default `lovelace`, which is Home Assistant's Overview dashboard. |
+| `ha_dashboard` | applied | Appended to `ha_url` as a path. Unset means `lovelace`, which is Home Assistant's Overview dashboard. |
 | `rotate_display` | applied | Output transform via `wlr-randr`: `normal`, `right` (270), `inverted` (180), `left` (90). Rotation is applied before Chromium launches. Unassigned touch devices are mapped to the discovered output by the bundled Cage patch. |
 | `screen_timeout` | applied | Seconds of idle before the output powers off via swayidle. `0` disables blanking (default). Fallback also `0`. |
 | `auth_method` | applied | `none` (default, persistent manual login), `credentials` (verified-origin form submission), or `trusted_networks` (requires matching Core settings). |
 | `ha_username` / `ha_password` | applied | Only used when `auth_method: credentials`. |
-| `login_delay` | applied | Seconds to wait for the login page before giving up on auto-login. |
+| `login_delay` | applied | Seconds to keep trying the automatic login in `credentials` mode, up to 120, after which the login page is left for manual use. |
 | `ignore_certificate_errors` | retired | Ignored legacy option; use explicit certificate trust below. |
 | `api_token` | applied | Required when the control API is enabled; minimum 32 characters. |
-| `browser_refresh` | applied | Periodic page refresh interval in seconds. `0` disables periodic refresh. |
+| `browser_refresh` | applied | Seconds between automatic reloads of the page the browser is showing. Default 12000. `0` disables it. It reloads the current page and does not navigate home; use `return_to_dashboard` for that. |
 | `lock_navigation` | applied | `true` by default. When `true`, a Chromium managed policy blocks every URL except the scheme, host and port of `ha_url` (plus any `allowed_origins`), and new windows are refused outright. See "Locking the kiosk to the dashboard" below. |
 | `allowed_origins` | applied | Empty by default. Extra origins that dashboard cards may embed in an iframe while `lock_navigation` is on, for example `https://web.weatherwise.app`. Exact `scheme://host[:port]` only. Ignored when `lock_navigation` is off, but still validated. See "Embedding other sites in dashboard cards" below. |
 | `return_to_dashboard` | applied | Seconds between checks that the page is still on the dashboard; if it is not, the browser is navigated back to `ha_url` + `ha_dashboard`. `0` (default) disables the check. |
-| `ha_sidebar` | not applied yet | Accepted by the schema, read nowhere. Hiding the sidebar is better done with the kiosk-mode frontend plugin inside Home Assistant. |
-| `ha_theme` | not applied yet | Accepted by the schema, read nowhere. Set the theme per-user in Home Assistant instead. |
+| `ha_sidebar` | ignored | Read nowhere; kept only so stored values stay valid. Hide the sidebar with the kiosk-mode frontend plugin inside Home Assistant. |
+| `ha_theme` | ignored | Read nowhere; kept only so stored values stay valid. Set the theme in the kiosk user's Home Assistant profile instead. |
 | `dark_mode` | applied | `true` by default. Starts Chromium with `--force-dark-mode`, so the browser reports `prefers-color-scheme: dark`. Home Assistant follows that only when the kiosk user's theme is set to Auto; see "Always-dark browser" below. |
 | `legacy_drm_commit` | applied | `false` by default. Sets `WLR_DRM_NO_ATOMIC=1` so Cage uses legacy DRM commits. Enable only if the log keeps repeating `Atomic commit failed: Resource busy`, seen on Intel i915 with a rotated output. Restart required. |
 
