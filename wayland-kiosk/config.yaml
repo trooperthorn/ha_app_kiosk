@@ -29,11 +29,16 @@ ulimits:
     soft: 65536
     hard: 65536
 
+# Options with a "?" in the schema and no entry below are optional in the
+# Supervisor sense: the key may be absent. Code reads them with an explicit
+# fallback (ha_dashboard falls back to lovelace). A default here would make
+# the option required. ha_sidebar and ha_theme are read nowhere and kept only
+# so stored values stay valid. api_token is an app-local shared secret for
+# the control API, not a Home Assistant token; see docs/security.md.
 options:
   ha_url: "http://homeassistant:8123"
   allow_http: true
   allow_self_signed: false
-  self_signed_certificate: ""
   audio_enabled: true
   debug_logging: false
   legacy_drm_commit: false
@@ -42,23 +47,16 @@ options:
     - /dev/dri/card0
     - /dev/dri/renderD128
   input_devices: []
-  ha_dashboard: "lovelace"
   browser_refresh: 12000
   lock_navigation: true
+  allowed_origins: []
   return_to_dashboard: 0
-  ha_sidebar: "none"
-  ha_theme: ""
   time_zone: "America/Chicago"
   dark_mode: true
   screen_timeout: 0
   rotate_display: "right"
   login_delay: 10
   auth_method: "none"
-  ha_username: ""
-  ha_password: ""
-  # App-local shared secret for the control API; not a HA long-lived
-  # access token. See docs/security.md.
-  api_token: ""
 
 schema:
   ha_url: url
@@ -76,8 +74,10 @@ schema:
   ha_dashboard: str?
   browser_refresh: int(0,)
   lock_navigation: bool
+  allowed_origins:
+    - "str(1,)"
   return_to_dashboard: int(0,)
-  ha_sidebar: list(full|narrow|none)
+  ha_sidebar: list(full|narrow|none)?
   ha_theme: str?
   time_zone: str?
   dark_mode: bool

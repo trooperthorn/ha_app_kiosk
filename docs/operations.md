@@ -170,6 +170,40 @@ affected, which does not matter on a touch-only kiosk. The startup
 Preferences rewrite in `run.sh` also clears `partition.per_host_zoom_levels`
 so a zoom level persisted by an earlier session does not survive a restart.
 
+## A card shows a gray blocked frame
+
+With `lock_navigation` on, the managed policy `kiosk-security.json` blocks
+every origin except the Home Assistant origin and the entries of
+`allowed_origins`. A dashboard card that embeds a site in an iframe then
+shows Chromium's gray "blocked" page inside the frame, while the rest of the
+dashboard looks normal. This was confirmed on a live panel on 2026-09-30 with
+a card embedding `https://web.weatherwise.app`: turning `lock_navigation` off
+fixed it. Scripted requests (`fetch` and XHR) are not filtered by this
+policy, so a card that only loads data does not need an entry.
+
+To diagnose it:
+
+1. Read the startup log line `Navigation lockdown ON; allowed origins: ...`.
+   The origin of the blocked frame must appear in that list exactly:
+   scheme, host and port. `https://example.com` and `https://www.example.com`
+   are different entries.
+2. Add the missing origin to `allowed_origins`, save, and restart the app.
+3. If the frame stays gray, the site redirects to or embeds content from a
+   second origin, and that origin must be listed too: every origin in the
+   frame's redirect chain is checked. Open the same card in a desktop
+   browser with the developer tools Network tab open, and list the origins
+   of the document requests for the frame. This app does not log which
+   origin Chromium blocked.
+4. A startup failure that names `allowed_origins` means an entry is not an
+   exact origin; the message names each rejected entry and the reason.
+
+Chromium's exact matching rules for a bare host in `URLAllowlist`, in
+particular whether a listed host also matches its subdomains, have not been
+verified against Chromium's source for this release. The entries are written
+as exact origins and `tests/browser_security_smoke.py` checks the HA origin,
+a listed origin and an unlisted origin in a real Chromium in CI. Treat any
+broader matching as unconfirmed until that is checked.
+
 ## Time zone handling
 
 The Supervisor injects Home Assistant's configured time zone into every
@@ -218,8 +252,9 @@ at port 8034 (no published host port) and accepts a single POST
   timer.
 - `display_off` -- turns the output off via `wlr-randr`.
 - `refresh_browser` -- reloads the current page via CDP `Page.reload`.
-- `launch_url` -- navigates to a URL (or the configured `ha_url` if none is
-  given) via CDP `Page.navigate`.
+- `launch_url` -- navigates to a URL (or the dashboard address if none is
+  given) via CDP `Page.navigate`. While `lock_navigation` is on it accepts
+  only the Home Assistant origin; `allowed_origins` does not widen it.
 - `is_display_on` -- reports whether `wlr-randr` shows the output enabled.
 - `wlr_randr` -- runs an arbitrary whitelisted `wlr-randr` invocation with
   caller-supplied arguments (see `docs/security.md` for the whitelist).
