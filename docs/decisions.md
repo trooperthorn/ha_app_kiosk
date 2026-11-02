@@ -221,6 +221,37 @@ while the cost it was imposing is a minute or more of dead panel. The
 once-per-episode bound keeps the original protection where it mattered: a
 slow dashboard is not reloaded on every cycle.
 
+## `allowed_origins` lists exact origins; `launch_url` stays Home Assistant only (2026-09-30)
+
+Evidence: on a live panel, a dashboard card embedding
+`https://web.weatherwise.app` showed Chromium's blocked page in its frame
+while `lock_navigation` was on, and turning the lock off fixed it. The cause
+is the policy written by `browser_policy.py`: `URLBlocklist: ["*"]` with a
+single `URLAllowlist` entry for the Home Assistant origin, which Chromium
+applies to iframe navigations as well as top-level ones. Scripted requests
+are not affected.
+
+Rejected: wildcard or domain-suffix entries, because a pattern such as
+`*.example.com` quietly widens the allowlist to every subdomain, including
+ones the owner does not control, and the lock exists to stop that. Rejected:
+paths in entries, because a navigation policy that matched part of a path
+would give a false sense of precision for pages whose redirects change the
+path. Rejected: leaving `lock_navigation` off as the workaround, which drops
+the popup blocking and the `--block-new-web-contents` flag along with the
+allowlist. Chosen: a list of exact `scheme://host[:port]` origins, validated
+at startup with every bad entry named, applied only while the lock is on and
+validated even while it is off so a typo never waits for the lock to be
+turned back on.
+
+Rejected: letting `launch_url` load listed origins. The list exists so
+dashboard cards can embed a site, and the control API putting that site
+full-screen would be a different capability that nobody asked for.
+`launch_url` therefore keeps its Home Assistant-only rule and says so in its
+refusal. The accepted cost is that a listed origin is allowed everywhere in
+the browser, so a link inside an embedded site can open it full-screen;
+`return_to_dashboard` is the documented recovery and the startup log warns
+when the list is set and that option is 0.
+
 ## `dark_mode` implemented as `--force-dark-mode`, without Blink auto-darkening (2026-09-09)
 
 The option had been accepted by the schema and read nowhere. Rejected:

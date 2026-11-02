@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Fix: with `lock_navigation` on (the default), a dashboard card that embeds
+  another site in an iframe, such as `https://web.weatherwise.app`, showed
+  Chromium's blocked page in the frame, because the managed policy allowed
+  only the Home Assistant origin. New option `allowed_origins` lists extra
+  exact origins (`scheme://host[:port]`, no paths or wildcards) that frames
+  may load. Invalid entries stop startup with a message naming each one,
+  even while the lock is off. The startup log now reports "Navigation
+  lockdown ON; allowed origins: ..." or "Navigation lockdown OFF", and warns
+  when the list is set while `return_to_dashboard` is 0. The control API's
+  `launch_url` stays limited to the Home Assistant origin, its refusal
+  message now says so, and it falls back to the dashboard address instead of
+  a hard-coded loopback URL.
+- Startup validation now reports every invalid setting in one message
+  instead of stopping at the first, and the credentials error names
+  `auth_method`.
 - Crash lines now say which page died and what it logged just before. The
   crash monitor records each DevTools target's URL (scheme, host and path
   only; queries and fragments carry auth codes) and attaches to page
@@ -37,6 +52,50 @@
   `/root/.cache`, and the browser's read of `/etc/machine-id` and `/data/`;
   quietly deny Chromium's startup probes of `/usr/lib/chromium/extensions/`
   and `/proc/*/clear_refs`. All were denials in a live install's audit log.
+- Add a Time zone setting defaulting to America/Chicago for Central Time
+  with automatic daylight saving changes, even if inherited TZ is UTC.
+- Resolve regular localtime files and skip invalid inherited zone names;
+  avoid replacing host-mounted timezone files during startup.
+- Log Chromium's actual timezone and local time after browser startup.
+- Fix: the browser could show UTC even when the container's own clock was
+  correct. `/etc/localtime` (which Supervisor typically bind-mounts,
+  independent of any `TZ` variable) is enough for `date` but not reliably
+  for Chromium's bundled ICU. The app now resolves a zone name from `TZ`,
+  `/etc/timezone`, or the `/etc/localtime` symlink target, and exports it as
+  `TZ`, the one signal Chromium does honor, for every child process.
+- Fix: the kiosk could sit on a Chromium error page indefinitely after Home
+  Assistant restarted. The watchdog only tested whether the renderer was
+  responsive, and an error page is a healthy renderer, so nothing recovered
+  it until a manual reload or the next `browser_refresh` (default: over
+  three hours). It now reads the document URI each cycle and reloads a
+  `chrome-error://` page within ~30s, retrying while Core is still down.
+- Fix: a crashed renderer waited for the second failed probe before being
+  reloaded, leaving a dead screen for a minute or more. The reload now
+  happens on the first failed probe, once per episode so a slow dashboard is
+  not put into a reload loop. Escalation to a container restart is unchanged.
+- Add a memory line to the log every 30 minutes (container usage against the
+  limit, Chromium RSS, peak) and the same counters to `/api/health`, so
+  "is this a resource problem" is answerable from the add-on log.
+- `dark_mode` is now applied: it starts Chromium with `--force-dark-mode` so
+  the browser reports `prefers-color-scheme: dark`. Home Assistant follows
+  that only when the kiosk user's theme mode is Auto; see DOCS.md.
+- Add `lock_navigation`: a Chromium managed policy that blocks every URL
+  except the origin of `ha_url`, plus `--block-new-web-contents` and
+  policy-level blocks on popups, downloads, printing, incognito, sign-in,
+  sync, autofill and the password manager. Off by default. The control
+  API's `launch_url` refuses off-origin URLs while it is on.
+- Add `return_to_dashboard`: seconds between checks that the browser is
+  still on the dashboard path, navigating it home when it is not. Covers
+  in-frontend wandering (Settings, Developer tools), which no browser URL
+  policy can see. `0` (default) disables it. See DOCS.md for why a
+  non-admin Home Assistant user is the real fix.
+- Fix: the dashboard clock could show UTC. The app now applies the time zone
+  the Supervisor passes from Home Assistant to /etc/localtime and
+  /etc/timezone at startup and logs it; DOCS.md explains the per-user
+  profile setting that decides which zone the clock follows.
+
+## KNOWN ISSUES
+- Install slower to add chrome, 1-5 minutes. I can't fix that.
 
 ## 2026.09.12.2 - Restart after browser crashes and blank pages
 
@@ -96,55 +155,6 @@
   vulnerable tempio, pin the base digest and aiohttp, retain full scan reports.
 - Expected Supervisor rating 8/8 when the custom profile is active; Protection
   mode stays enabled. Physical HAOS display/AppArmor acceptance remains required.
-
-## Unreleased
-
-- Add a Time zone setting defaulting to America/Chicago for Central Time
-  with automatic daylight saving changes, even if inherited TZ is UTC.
-- Resolve regular localtime files and skip invalid inherited zone names;
-  avoid replacing host-mounted timezone files during startup.
-- Log Chromium's actual timezone and local time after browser startup.
-
-## KNOWN ISSUES
-- Install slower to add chrome, 1-5 minutes. I can't fix that.
-
-## Unreleased
-- Fix: the browser could show UTC even when the container's own clock was
-  correct. `/etc/localtime` (which Supervisor typically bind-mounts,
-  independent of any `TZ` variable) is enough for `date` but not reliably
-  for Chromium's bundled ICU. The app now resolves a zone name from `TZ`,
-  `/etc/timezone`, or the `/etc/localtime` symlink target, and exports it as
-  `TZ` — the one signal Chromium does honor — for every child process.
-- Fix: the kiosk could sit on a Chromium error page indefinitely after Home
-  Assistant restarted. The watchdog only tested whether the renderer was
-  responsive, and an error page is a healthy renderer, so nothing recovered
-  it until a manual reload or the next `browser_refresh` (default: over
-  three hours). It now reads the document URI each cycle and reloads a
-  `chrome-error://` page within ~30s, retrying while Core is still down.
-- Fix: a crashed renderer waited for the second failed probe before being
-  reloaded, leaving a dead screen for a minute or more. The reload now
-  happens on the first failed probe, once per episode so a slow dashboard is
-  not put into a reload loop. Escalation to a container restart is unchanged.
-- Add a memory line to the log every 30 minutes (container usage against the
-  limit, Chromium RSS, peak) and the same counters to `/api/health`, so
-  "is this a resource problem" is answerable from the add-on log.
-- `dark_mode` is now applied: it starts Chromium with `--force-dark-mode` so
-  the browser reports `prefers-color-scheme: dark`. Home Assistant follows
-  that only when the kiosk user's theme mode is Auto; see DOCS.md.
-- Add `lock_navigation`: a Chromium managed policy that blocks every URL
-  except the origin of `ha_url`, plus `--block-new-web-contents` and
-  policy-level blocks on popups, downloads, printing, incognito, sign-in,
-  sync, autofill and the password manager. Off by default. The control
-  API's `launch_url` refuses off-origin URLs while it is on.
-- Add `return_to_dashboard`: seconds between checks that the browser is
-  still on the dashboard path, navigating it home when it is not. Covers
-  in-frontend wandering (Settings, Developer tools), which no browser URL
-  policy can see. `0` (default) disables it. See DOCS.md for why a
-  non-admin Home Assistant user is the real fix.
-- Fix: the dashboard clock could show UTC. The app now applies the time zone
-  the Supervisor passes from Home Assistant to /etc/localtime and
-  /etc/timezone at startup and logs it; DOCS.md explains the per-user
-  profile setting that decides which zone the clock follows.
 
 ## 2026.09.06.1
 - Fix: touchscreen pinch could zoom the whole dashboard. Chromium now starts

@@ -60,7 +60,12 @@ Invalid/unreadable options fail startup. Command execution remains an explicit
 binary allowlist using exec arguments, not a shell. Timed-out child commands
 are killed and reaped. Browser navigation validates HTTP/HTTPS URLs and honors
 allow_http and optional same-origin lockdown. Lockdown defaults on; failure
-to write browser policy aborts startup. It is navigation control, not a network
+to write browser policy aborts startup. The lockdown allowlist is the Home
+Assistant origin plus the exact origins in allowed_origins, which exist so
+dashboard cards can embed those sites in iframes. An origin listed there is
+allowed for the whole browser, not only for frames, so a link inside it can be
+opened full-screen; return_to_dashboard is the recovery. The control API's
+launch_url stays restricted to the Home Assistant origin and ignores the list. It is navigation control, not a network
 firewall or Home Assistant entity permission system. Use a non-admin kiosk user.
 
 ## Local HTTP and self-signed HTTPS

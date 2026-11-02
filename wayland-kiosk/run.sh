@@ -186,6 +186,30 @@ fi
 # stops startup rather than launching an unrestricted browser.
 python3 /app/browser_policy.py "$URL"
 
+# Report the effective lockdown state so a blocked iframe can be diagnosed
+# from the log alone; see docs/operations.md.
+ALLOWED_ORIGINS=$(python3 - "$URL" <<'PYEOF'
+import sys
+from urllib.parse import urlsplit
+
+sys.path.insert(0, "/app")
+from security_config import load_options, normalize_allowed_origins
+
+options = load_options()
+parts = urlsplit(sys.argv[1])
+extra = normalize_allowed_origins(options.get("allowed_origins"), options.get("allow_http", True), sys.argv[1])
+print(" ".join([f"{parts.scheme}://{parts.netloc}"] + extra))
+PYEOF
+)
+if [ "$LOCK_NAVIGATION" = "true" ]; then
+    bashio::log.info "Navigation lockdown ON; allowed origins: ${ALLOWED_ORIGINS}"
+    if [ "${ALLOWED_ORIGINS#* }" != "$ALLOWED_ORIGINS" ] && [ "$(read_option 'return_to_dashboard' '0')" = "0" ]; then
+        bashio::log.warning "allowed_origins is set but return_to_dashboard is 0. A listed site can be opened full-screen from a link inside it, and the panel would stay there. Set return_to_dashboard to recover automatically."
+    fi
+else
+    bashio::log.info "Navigation lockdown OFF"
+fi
+
 # Dynamic hardware discovery (display & touch). Static fallbacks below are
 # used only if auto-discovery fails.
 STATIC_DISPLAY="DP-1"

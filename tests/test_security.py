@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 APP = Path(__file__).resolve().parents[1] / 'wayland-kiosk'
 sys.path.insert(0, str(APP))
-from security_config import effective_ha_url, validate_options, validate_url
+from security_config import effective_ha_url, normalize_allowed_origins, validate_options, validate_url
 from browser_policy import policy_for
 from credential_login import login_expression
 from aiohttp import web
@@ -57,6 +57,101 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('location.origin !== expected', expression)
         self.assertIn("location.pathname !== '/auth/authorize'", expression)
         self.assertIn('\\\"; bad() //', expression)
+
+
+class AllowedOriginsTests(unittest.TestCase):
+    HA = 'http://ha.test:8123/lovelace'
+
+    def test_default_allowlist_is_exactly_the_ha_origin(self):
+        policy = policy_for({}, self.HA)
+        self.assertEqual(policy['URLAllowlist'], ['http://ha.test:8123'])
+        self.assertEqual(policy['URLBlocklist'], ['*'])
+        policy = policy_for({'allowed_origins': []}, self.HA)
+        self.assertEqual(policy['URLAllowlist'], ['http://ha.test:8123'])
+
+    def test_entry_with_trailing_slash_is_added(self):
+        policy = policy_for({'allowed_origins': ['https://web.weatherwise.app/']}, self.HA)
+        self.assertEqual(policy['URLAllowlist'], ['http://ha.test:8123', 'https://web.weatherwise.app'])
+        self.assertEqual(policy['URLBlocklist'], ['*'])
+
+    def test_each_reject_case_names_the_entry(self):
+        bad = [
+            'https://example.com/path', 'https://example.com/a/b/', 'https://example.com?q=1',
+            'https://example.com/#frag', 'https://user@example.com', 'https://user:pw@example.com',
+            'https://exa mple.com', 'https://example.com\n', 'https://example.com\t',
+            'https://*.example.com', 'https://example.*', '.example.com', 'https://.example.com',
+            'ftp://example.com', 'file:///etc/passwd', 'javascript:alert(1)', 'example.com',
+            'https://example.com:0', 'https://example.com:65536', 'https://example.com:abc',
+            'https://', '', 42, None, ['https://example.com'],
+        ]
+        for entry in bad:
+            with self.subTest(entry=entry), self.assertRaises(ValueError) as caught:
+                normalize_allowed_origins([entry], True)
+            self.assertIn('allowed_origins', str(caught.exception))
+            if isinstance(entry, str) and entry:
+                self.assertIn(repr(entry), str(caught.exception))
+
+    def test_non_list_value_is_rejected(self):
+        for value in ('https://example.com', {'a': 'b'}, 5, True):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                normalize_allowed_origins(value, True)
+
+    def test_two_bad_entries_are_both_reported(self):
+        with self.assertRaises(ValueError) as caught:
+            normalize_allowed_origins(['https://a.example/path', 'https://ok.example', 'https://*.b.example'], True)
+        message = str(caught.exception)
+        self.assertIn('a.example/path', message)
+        self.assertIn('*.b.example', message)
+        self.assertNotIn('ok.example', message)
+
+    def test_http_requires_allow_http(self):
+        with self.assertRaises(ValueError):
+            normalize_allowed_origins(['http://lan.test:8080'], False)
+        self.assertEqual(normalize_allowed_origins(['http://lan.test:8080'], True), ['http://lan.test:8080'])
+        self.assertEqual(normalize_allowed_origins(['https://lan.test'], False), ['https://lan.test'])
+
+    def test_normalization(self):
+        self.assertEqual(normalize_allowed_origins(['HTTPS://Web.WeatherWise.App'], True), ['https://web.weatherwise.app'])
+        self.assertEqual(normalize_allowed_origins(['https://a.test:443', 'http://b.test:80/'], True), ['https://a.test', 'http://b.test'])
+        self.assertEqual(normalize_allowed_origins(['https://a.test:8443'], True), ['https://a.test:8443'])
+        self.assertEqual(normalize_allowed_origins(['https://a.test', 'https://A.test/', 'https://a.test:443'], True), ['https://a.test'])
+        self.assertEqual(normalize_allowed_origins(['https://[::1]:8443'], True), ['https://[::1]:8443'])
+
+    def test_ha_origin_is_deduplicated(self):
+        self.assertEqual(normalize_allowed_origins(['http://ha.test:8123', 'https://x.test'], True, self.HA), ['https://x.test'])
+        policy = policy_for({'allowed_origins': ['http://HA.test:8123/']}, self.HA)
+        self.assertEqual(policy['URLAllowlist'], ['http://ha.test:8123'])
+
+    def test_unlocked_ignores_the_list_but_validation_still_runs(self):
+        policy = policy_for({'lock_navigation': False, 'allowed_origins': ['https://x.test']}, self.HA)
+        self.assertNotIn('URLAllowlist', policy)
+        self.assertNotIn('URLBlocklist', policy)
+        with self.assertRaises(ValueError):
+            validate_options({'lock_navigation': False, 'allowed_origins': ['https://x.test/path']})
+        validate_options({'lock_navigation': False, 'allowed_origins': ['https://x.test']})
+
+    def test_validate_options_collects_every_error(self):
+        options = {
+            'ha_url': 'file:///etc/passwd', 'control_api_enabled': True, 'api_token': 'short',
+            'allow_self_signed': True, 'auth_method': 'credentials',
+            'allowed_origins': ['https://bad.test/path', 'https://*.bad.test'],
+        }
+        with self.assertRaises(ValueError) as caught:
+            validate_options(options)
+        message = str(caught.exception)
+        for fragment in ('HTTP and HTTPS', 'api_token', 'self_signed_certificate', 'auth_method', 'bad.test/path', '*.bad.test'):
+            self.assertIn(fragment, message)
+        self.assertGreaterEqual(message.count('; '), 5)
+
+    def test_credentials_error_names_auth_method(self):
+        with self.assertRaises(ValueError) as caught:
+            validate_options({'auth_method': 'credentials'})
+        self.assertIn('auth_method', str(caught.exception))
+        self.assertIn('ha_username', str(caught.exception))
+
+    def test_valid_options_pass_with_defaults(self):
+        validate_options({})
+        validate_options({'allowed_origins': []})
 
 
 class APITests(unittest.IsolatedAsyncioTestCase):
