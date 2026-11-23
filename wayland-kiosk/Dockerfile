@@ -64,7 +64,7 @@ RUN if [ "${BUILD_ARCH}" = "amd64" ]; then \
 # aiohttp via pip, not the py3-aiohttp apk package: Alpine's packaged version
 # lags behind aiohttp's own fixed releases (see docs/security.md). py3-pip
 # is already installed above.
-RUN pip install --no-cache-dir --break-system-packages aiohttp==3.14.3
+RUN pip install --no-cache-dir --break-system-packages aiohttp==3.14.4
 
 # The base image includes tempio, unused by this app and its init scripts.
 # Removing it removes its vulnerable embedded Go dependencies instead of hiding findings.
