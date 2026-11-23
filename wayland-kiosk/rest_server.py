@@ -6,7 +6,7 @@ import time
 import urllib.request
 import json
 import hmac
-from security_config import load_options, validate_options, validate_url, origin
+from security_config import effective_ha_url, load_options, validate_options, validate_url, origin
 from credential_login import credential_login
 from crash_monitor import watch_crashes, memory_events, process_census
 from typing import Any, Dict, Optional
@@ -622,7 +622,13 @@ async def handle_wlr_randr(data: Payload) -> Dict[str, Any]:
 @register_function("launch_url", optional=["url"])
 async def handle_launch_url(data: Payload) -> Dict[str, Any]:
     """Redirect browser to given URL via Chrome DevTools Protocol."""
-    url = str(data["url"]) if data.get("url") else str(OPTIONS.get("ha_url") or "http://127.0.0.1:8123")
+    if data.get("url"):
+        url = str(data["url"])
+    else:
+        try:
+            url = KIOSK_URL or effective_ha_url(OPTIONS)
+        except ValueError as error:
+            return {"success": False, "error": str(error)}
     if url != "about:blank":
         try:
             validate_url(url, OPTIONS.get('allow_http', True))
@@ -630,7 +636,9 @@ async def handle_launch_url(data: Payload) -> Dict[str, Any]:
             return {"success": False, "error": str(error)}
     # Chromium would refuse this anyway once lock_navigation is on; refusing
     # it here turns a silently blocked page into an answer the caller can act
-    # on. See docs/security.md.
+    # on. Origins in allowed_origins are deliberately not accepted here: they
+    # exist so dashboard cards can embed a site in an iframe, not so the API
+    # can put one full-screen. See docs/security.md.
     if (
         NAVIGATION_LOCKED
         and KIOSK_URL
@@ -640,9 +648,10 @@ async def handle_launch_url(data: Payload) -> Dict[str, Any]:
         return {
             "success": False,
             "error": (
-                "lock_navigation is enabled; only URLs on "
-                f"{urlsplit(KIOSK_URL).scheme}://{urlsplit(KIOSK_URL).netloc} "
-                "can be loaded."
+                "lock_navigation is enabled and launch_url loads only the "
+                "Home Assistant origin "
+                f"{urlsplit(KIOSK_URL).scheme}://{urlsplit(KIOSK_URL).netloc}; "
+                "origins in allowed_origins are for embedded frames only."
             ),
         }
     result = await cdp_page_command("Page.navigate", {"url": url})

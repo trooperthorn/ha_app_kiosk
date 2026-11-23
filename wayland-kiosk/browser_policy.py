@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 from urllib.parse import urlsplit
-from security_config import load_options, validate_url
+from security_config import load_options, normalize_allowed_origins, validate_url
 
 
 def policy_for(options, url):
@@ -21,7 +21,8 @@ def policy_for(options, url):
         'DefaultSoundContentSetting': 1 if options.get('audio_enabled', True) else 2,
     }
     if options.get('lock_navigation', True):
-        policy.update(URLBlocklist=['*'], URLAllowlist=[f'{parts.scheme}://{parts.netloc}'])
+        extra = normalize_allowed_origins(options.get('allowed_origins'), options.get('allow_http', True), url)
+        policy.update(URLBlocklist=['*'], URLAllowlist=[f'{parts.scheme}://{parts.netloc}'] + extra)
     elif not options.get('allow_http', True):
         policy['URLBlocklist'] = ['http://*']
     return policy
